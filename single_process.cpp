@@ -1,17 +1,5 @@
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <string.h>
-#include <netdb.h>
-#include <errno.h>
-#include <iostream>
-#include "npshell.h"
-using namespace std;
-#define LISTEN_BACKLOG 50
-#define QLEN 5
-#define BUFSIZE 4096
+
+#include "npshellForSingleP.h"
 
 int passiveTCP(int port)
 {
@@ -40,18 +28,6 @@ int passiveTCP(int port)
     return sockfd;
 }
 
-int echo(int fd)
-{
-    char buf[BUFSIZE];
-    int cc;
-    cc = read(fd, buf, sizeof(buf));
-    if (cc < 0)
-        perror("read");
-    if (cc && write(fd, buf, cc) < 0)
-        perror("write");
-    return cc;
-}
-
 int main(int argc, char *argv[])
 {
     setenv("PATH", "bin:.", 1);
@@ -59,15 +35,13 @@ int main(int argc, char *argv[])
     int port = (argc > 1) ? atoi(argv[1]) : 7000;
     cout << "[Port]: " << port << endl;
     struct sockaddr_in fsin;
-    int msock; // master socket fd
-    fd_set rfds;
-    fd_set afds;
+
     int alen;
-    int fd, nfds;
+    int fd;
 
     msock = passiveTCP(port);
 
-    nfds = getdtablesize();
+    nfds = FD_SETSIZE;
     FD_ZERO(&afds);
     FD_SET(msock, &afds);
 
@@ -75,39 +49,49 @@ int main(int argc, char *argv[])
     {
         memcpy(&rfds, &afds, sizeof(rfds));
 
-        for(int i=0;i<nfds;i++){
-             cout<<FD_ISSET(i, &afds);
-             if(i==10)
-                cout<<endl;
-        }
-
-        cout<<"wait for select"<<endl;
         if (select(nfds, &rfds, (fd_set *)0, (fd_set *)0, (struct timeval *)0) < 0)
             perror("select");
 
-        cout << nfds << endl;
         if (FD_ISSET(msock, &rfds))
         {
             int ssock;
             alen = sizeof(fsin);
-            cout<<"wait for accept"<<endl;
             ssock = accept(msock, (struct sockaddr *)&fsin, (socklen_t *)&alen);
             if (ssock < 0)
                 perror("accept");
             FD_SET(ssock, &afds);
+            char colon[] = ":";
+            string ip = inet_ntoa(fsin.sin_addr);
+            ip = ip + ":" + to_string(ntohs(fsin.sin_port));
+            client nC = {clients.size() + 1, ssock, "(no name)", ip};
+            clients.push_back(nC);
+
+            send(ssock, welcome, sizeof(welcome), 0);
+
+            broadcast(LOGIN, nC, "", 0);
+
+            send(ssock, "% ", 2, 0);
         }
         for (fd = 0; fd < nfds; fd++)
         {
-            cout<<FD_ISSET(fd, &rfds)<<" "<<FD_ISSET(fd, &afds)<<endl;
             if (fd != msock && FD_ISSET(fd, &rfds))
             {
-                cout<<fd<<endl;
-                if (echo(fd) == 0)
+                if (shellwithFD(fd) < 1)
                 {
+                    client c;
+                    for (int clientIndex = 0; clientIndex < clients.size(); clientIndex++)
+                    {
+                        if (clients[clientIndex].fd == fd)
+                        {
+                            c = clients[clientIndex];
+                            break;
+                        }
+                    }
+                    broadcast(LOGOUT, c, "", 0);
                     close(fd);
+                    // cout << "fd:" << fd << " is closed" << endl;
                     FD_CLR(fd, &afds);
                 }
-                sleep(3);
             }
         }
     }
