@@ -1,2 +1,2 @@
 make
-./simple 2000
+./single_process 2000

@@ -1,2 +1,3 @@
 main:
-	g++ main.cpp -o simple -g
+#	g++ simple.cpp -o simple
+	g++ single_process.cpp -o single_process
