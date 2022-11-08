@@ -21,7 +21,7 @@ int passiveTCP(int port){
 	memset((char*)&serv_addr, 0, sizeof(serv_addr));
 	//bzero((char* )&serv_addr, sizeof(serv_addr));
 	serv_addr.sin_family		= AF_INET;
-	serv_addr.sin_addr.s_addr	= htonl(INADDR_ANY);
+	serv_addr.sin_addr.s_addr	= INADDR_ANY;
 	serv_addr.sin_port			= htons(port);
 
     int optval = 1;
@@ -41,29 +41,34 @@ int main(int argc,char* argv[]){
     int port = (argc>1)? atoi(argv[1]):7000;
     cout<<"[Port]: "<<port<<endl;
     int msock = passiveTCP(port); // master socket fd
+    int ssock; // slave socket fd
     setenv("PATH", "bin:.", 1);
 
     struct sockaddr_in child_addr;	
 	int addrlen = sizeof(child_addr);
     while(true){
         cout<<"wait for accept"<<endl;
-        int ssock = accept(msock,(struct sockaddr*)&child_addr,(socklen_t*)&addrlen); // slave socket fd
+        ssock = accept(msock,(struct sockaddr*)&child_addr,(socklen_t*)&addrlen); // slave socket fd
         if(ssock<0)
             perror("S/Accept");
-
+        
         int pid = fork();
         while(pid < 0){
             usleep(500);
             pid = fork();
         }
-        if(pid>0)
+        if(pid>0){
             close(ssock);
+            // shell();
+            cout<<"end"<<endl;
+        }
         else{
             dup2(ssock,0);
 			dup2(ssock,1);
 			dup2(ssock,2);
             close(ssock);
 			close(msock);
+            
             shell();
         }
     }

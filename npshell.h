@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <fstream>
 #include <pwd.h>
+#include <algorithm>
 using namespace std;
 
 struct myNumberPipe
@@ -33,6 +34,55 @@ int parserCommand(vector<string> SeperateInput);
 void signalHandler(int sig)
 {
     pid_t pid = wait(NULL);
+}
+
+int shell()
+{
+    signal(SIGCHLD, signalHandler);
+    clearenv();
+    setenv("PATH", "bin:.", 1);
+
+    // tmp variable
+    string s;
+    cout << "% ";
+    while (getline(cin, s))
+    {
+       if (s == "")
+        {
+            cout << "% ";
+            continue;
+        }
+        
+        // cout<<s.size()<<endl;
+		s.erase(remove(s.begin(), s.end(), '\n'),s.end());
+		s.erase(remove(s.begin(), s.end(), '\r'),s.end());
+        // cout<<s.size()<<endl;
+
+        // 分割當前的指令
+        vector<string> lineSplit;
+        string delimiter = " ";
+
+        size_t pos = 0;
+        string token;
+        while ((pos = s.find(delimiter)) != string::npos)
+        {
+            token = s.substr(0, pos);
+            lineSplit.push_back(token);
+            s.erase(0, pos + delimiter.length());
+            if (token[0] == '|' && token.size() > 1)
+            {
+                parserCommand(lineSplit);
+                lineSplit.clear();
+            }
+        }
+
+        lineSplit.push_back(s);
+
+        parserCommand(lineSplit);
+
+        cout << "% ";
+    }
+    return 1;
 }
 
 vector<myNumberPipe> NumberPipeArray;
@@ -77,10 +127,8 @@ int parserCommand(vector<string> SeperateInput)
     {
         if (getenv(SeperateInput[1].c_str()) != NULL)
         {
-            cout<<getenv(SeperateInput[1].c_str())<<endl;
+            printf("%s\n", getenv(SeperateInput[1].c_str()));
         }
-        else
-            cout<<"no env"<<endl;
         return 1;
     }
     else if (SeperateInput[0] == "setenv")
@@ -98,10 +146,14 @@ int parserCommand(vector<string> SeperateInput)
     }
 
     pid_t pid, wpid;
-    int status = 0, count = 0, parseCommandLine = 0;
+    int status = 0;
+
+    int count = 0, parseCommandLine = 0, pipeNumber = 0;
     vector<myCommandLine> parseCommand;
     parseCommand.resize(1);
+
     bool hasNumberPipe = false;
+
     while (count < SeperateInput.size())
     {
         if (SeperateInput[count][0] == '|' || SeperateInput[count][0] == '!')
@@ -148,16 +200,22 @@ int parserCommand(vector<string> SeperateInput)
                 parseCommand.push_back(newCommand);
                 parseCommandLine++;
             }
+            
+            count++;
+            if (count == SeperateInput.size())
+                break;
+            
         }
-        else
-            parseCommand[parseCommandLine].inputCommand.push_back(SeperateInput[count]);
+        parseCommand[parseCommandLine].inputCommand.push_back(SeperateInput[count]);
         count++;
     }
+
+
 
     int pipeArray[2][2];
     for (int i = 0; i < parseCommand.size(); i++)
     {
-        if( pipe(pipeArray[i%2]) < 0)
+        if(pipe(pipeArray[i%2]) < 0)
             perror("pipe gen failed");
 
         pid = fork();
@@ -275,48 +333,4 @@ void executeFunction(myCommandLine tag)
         cerr << "Unknown command: [" << tag.inputCommand[0] << "]." << endl;
         exit(-1);
     };
-}
-
-void shell()
-{
-    cout<<getenv("PATH")<<endl;
-    signal(SIGCHLD, signalHandler);
-    clearenv();
-    setenv("PATH", "bin:.", 1);
-
-    // tmp variable
-    string s;
-    cout << "% ";
-    while (getline(cin, s))
-    {
-       if (s == "")
-        {
-            cout << "% ";
-            continue;
-        }
-
-        // 分割當前的指令
-        vector<string> lineSplit;
-        string delimiter = " ";
-
-        size_t pos = 0;
-        string token;
-        while ((pos = s.find(delimiter)) != string::npos)
-        {
-            token = s.substr(0, pos);
-            lineSplit.push_back(token);
-            s.erase(0, pos + delimiter.length());
-            if (token[0] == '|' && token.size() > 1)
-            {
-                parserCommand(lineSplit);
-                lineSplit.clear();
-            }
-        }
-
-        lineSplit.push_back(s);
-
-        parserCommand(lineSplit);
-
-        cout << "% ";
-    }
 }
