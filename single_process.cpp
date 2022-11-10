@@ -1,4 +1,3 @@
-
 #include "npshellForSingleP.h"
 
 int passiveTCP(int port)
@@ -28,6 +27,20 @@ int passiveTCP(int port)
     return sockfd;
 }
 
+void newClientHandler(client *client)
+{
+    for (int i = 1; i < clients.size(); i++)
+    {
+        if (clients[i] == NULL)
+        {
+            clients[i] = client;
+            return;
+        }
+    }
+    clients.push_back(client);
+    return;
+}
+
 int main(int argc, char *argv[])
 {
     setenv("PATH", "bin:.", 1);
@@ -50,10 +63,12 @@ int main(int argc, char *argv[])
     {
         memcpy(&rfds, &afds, sizeof(rfds));
 
-        int err,stat;
-        do{
+        int err, stat;
+        do
+        {
             stat = select(nfds, &rfds, (fd_set *)0, (fd_set *)0, (struct timeval *)0);
-            if( stat< 0) err = errno;
+            if (stat < 0)
+                err = errno;
         } while ((stat < 0) && (err == EINTR)); // 被signal跳出去了，要讓他重跑
         if (FD_ISSET(msock, &rfds))
         {
@@ -66,13 +81,11 @@ int main(int argc, char *argv[])
             char colon[] = ":";
             string ip = inet_ntoa(fsin.sin_addr);
             ip = ip + ":" + to_string(ntohs(fsin.sin_port));
-            client nC = {ssock, "(no name)", ip};
-            clients.push_back(nC);
-
-            send(ssock, welcome, sizeof(welcome), 0);
-
-            broadcast(LOGIN, &nC, "", 0);
-
+            client *nC = new client(ssock, "(no name)", ip);
+            setEnv("PATH", "bin:.", nC);
+            newClientHandler(nC);
+            send(ssock, welcome, sizeof(welcome) - 1, 0);
+            broadcast(LOGIN, nC, "", 0, 0);
             send(ssock, "% ", 2, 0);
         }
         for (fd = 0; fd < nfds; fd++)
@@ -82,17 +95,17 @@ int main(int argc, char *argv[])
                 if (shellwithFD(fd) < 1)
                 {
                     client *c;
-                    for (int clientIndex = 0; clientIndex < clients.size(); clientIndex++)
+                    int clientIndex;
+                    for (clientIndex = 1; clientIndex < clients.size(); clientIndex++)
                     {
-                        if (clients[clientIndex].fd == fd)
+                        if (clients[clientIndex] != NULL && clients[clientIndex]->fd == fd)
                         {
-                            c = &clients[clientIndex];
+                            c = clients[clientIndex];
                             break;
                         }
                     }
-                    broadcast(LOGOUT, c, "", 0);
-                    //TODO: logoutControl 要處理map裡面的pipe是否有殘留;
-                    logoutControl(fd);
+                    broadcast(LOGOUT, c, "", 0, 0);
+                    logoutControl(fd, clientIndex);
                     close(fd);
                     // cout << "fd:" << fd << " is closed" << endl;
                     FD_CLR(fd, &afds);

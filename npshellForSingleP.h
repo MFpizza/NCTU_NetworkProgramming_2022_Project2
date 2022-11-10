@@ -32,6 +32,9 @@ typedef enum
     TELL,
     SEND,
     RECV,
+    ERROR_USER,
+    ERROR_PIPE_NOT_EXIST,
+    ERROR_PIPE_IS_EXIST
 } BROADCAST_TYPE;
 
 struct myNumberPipe
@@ -52,29 +55,38 @@ struct myCommandLine
 
 struct client
 {
+    client(int _fd, string _name, string _ip)
+    {
+        fd = _fd;
+        name = _name;
+        ip = _ip;
+    }
     int fd;
     string name;
     string ip;
     vector<myNumberPipe> NumberPipeArray;
     int GlobalPipe[1000][2];
     bool GlobalPipeUsed[1000];
+    map<string, string> environment;
 };
 
 int msock; // master socket fd
 int nfds;
 fd_set rfds;
 fd_set afds;
-vector<client> clients;
+vector<client *> clients;
 
 map<int, map<int, int *>> userPipe;
 // 格式 本身自己的fd : 對方的fd 要傳入自己本身的對應的pipe
 
-void executeFunction(myCommandLine tag, int fd);
+void executeFunction(myCommandLine tag);
 int parserCommand(vector<string> SeperateInput, int fd, client *c);
-void broadcast(BROADCAST_TYPE type, client *from, string msg, int toFD);
+void broadcast(BROADCAST_TYPE type, client *from, string msg, int targetFD, int targetIndex);
 void who(int fd);
 void name(int fd, string name);
-void logoutControl(int fd);
+void logoutControl(int fd, int clientIndex);
+char *printEnv(string variable, client *c);
+int setEnv(string s1, string s2, client *c);
 
 void signalHandler(int sig)
 {
@@ -93,7 +105,6 @@ const char welcome[] =
  */
 int shellwithFD(int fd)
 {
-
     char buf[BUFSIZE];
     memset(buf, 0, sizeof(char) * BUFSIZE);
     int cc;
@@ -109,8 +120,8 @@ int shellwithFD(int fd)
     client *c;
     for (int i = 1; i < clients.size(); i++)
     {
-        if (clients[i].fd == fd)
-            c = &clients[i];
+        if (clients[i] != NULL && clients[i]->fd == fd)
+            c = clients[i];
     }
 
     dup2(fd, 1);
@@ -118,7 +129,7 @@ int shellwithFD(int fd)
 
     signal(SIGCHLD, signalHandler);
     clearenv();
-    setenv("PATH", "bin:.", 1);
+    setenv("PATH", printEnv("PATH", c), 1);
 
     // tmp variable
     string s(buf);
@@ -206,30 +217,22 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
 
     if (SeperateInput[0] == "printenv")
     {
-        if (getenv(SeperateInput[1].c_str()) != NULL)
-        {
-            printf("%s\n", getenv(SeperateInput[1].c_str()));
-        }
+        printf("%s\n", printEnv(SeperateInput[1], c));
         return 1;
     }
     else if (SeperateInput[0] == "setenv")
     {
-        if (setenv(SeperateInput[1].c_str(), SeperateInput[2].c_str(), 1) == -1)
-        {
-            cerr << "setenv error" << endl;
-            return (-1);
-        };
-        return 1;
+        return setEnv(SeperateInput[1], SeperateInput[2], c);
     }
     else if (SeperateInput[0] == "exit")
     {
         return 0;
     }
-    else if (SeperateInput[0] == "name" )
+    else if (SeperateInput[0] == "name")
     {
-        if(SeperateInput.size() > 2)
+        if (SeperateInput.size() > 2)
         {
-            cout<<"only one word behind name: [name id]"<<endl;
+            cout << "only one word behind name: [name id]" << endl;
             return 1;
         }
         name(fd, SeperateInput[1]);
@@ -249,7 +252,7 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
             else
                 msg += SeperateInput[i];
 
-        broadcast(YELL, c, msg, 0);
+        broadcast(YELL, c, msg, 0, 0);
         return 1;
 
         cerr << "no found client\n";
@@ -258,9 +261,9 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
     else if (SeperateInput[0] == "tell")
     {
         int index = stoi(SeperateInput[1]);
-        if (index < 1 && index > clients.size())
+        if ((index < 1 || index > clients.size()) || clients[index] == NULL)
         {
-            cout << "*** Error: user #" << index << " does not exist yet. ***\n";
+            broadcast(ERROR_USER, c, "", 0, index);
             return 1;
         }
         string msg = "";
@@ -270,14 +273,17 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
             else
                 msg += SeperateInput[i];
 
-        broadcast(TELL, c, msg, clients[index].fd);
+        broadcast(TELL, c, msg, clients[index]->fd, 0);
         return 1;
     }
 
     pid_t pid, wpid;
     int status = 0;
 
+    string msg;
     int count = 0, parseCommandLine = 0, pipeNumber = 0;
+    // userpipe variable
+    int from, to;
     vector<myCommandLine> parseCommand;
     parseCommand.resize(1);
 
@@ -286,7 +292,7 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
     int myIndex;
     for (int clientIndex = 1; clientIndex < clients.size(); ++clientIndex)
     {
-        if (clients[clientIndex].fd == fd)
+        if (clients[clientIndex] != NULL && clients[clientIndex]->fd == fd)
         {
             myIndex = clientIndex;
         }
@@ -294,7 +300,7 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
 
     while (count < SeperateInput.size())
     {
-        //! 若是userpipe出error 該繼續運行後面的指令還是直接返回
+
         if (SeperateInput[count][0] == '|' || SeperateInput[count][0] == '!')
         {
             if (SeperateInput[count][0] == '!')
@@ -339,18 +345,18 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
                 parseCommand.push_back(newCommand);
                 parseCommandLine++;
             }
-
-            count++;
-            if (count == SeperateInput.size())
-                break;
         }
 
         // user pipe
-        if (SeperateInput[count][0] == '<' || SeperateInput[count][0] == '>')
+        else if ((SeperateInput[count][0] == '<' || SeperateInput[count][0] == '>') && SeperateInput[count].size() > 1)
         {
-            char userPipeChar = SeperateInput[count][0];
-            SeperateInput[count].erase(SeperateInput[count].begin());
-            int targetIndex = atoi(SeperateInput[count].c_str());
+            msg = SeperateInput[0];
+            for (int i = 1; i < SeperateInput.size(); i++)
+                msg += (" " + SeperateInput[i]);
+
+            string copyString = SeperateInput[count];
+            copyString.erase(copyString.begin());
+            int targetIndex = atoi(copyString.c_str());
 
             if (targetIndex == myIndex)
             {
@@ -358,44 +364,37 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
                 return 1;
             }
 
-            if (targetIndex > clients.size() || targetIndex <= 0)
-            {
-                cout << " *** Error: user #" << targetIndex << " does not exist yet. ***" << endl;
-                return 1;
-            }
             // targetIndex 是 對方的clients index not FD Number;
-
-            string msg = "";
-            for (int i = 0; i < parseCommand[parseCommandLine].inputCommand.size(); i++)
-            {
-                msg += (parseCommand[parseCommandLine].inputCommand[i] + " ");
-            }
-            msg += ((userPipeChar) + SeperateInput[count]);
-
-            int from, to;
-            if (userPipeChar == '<')
+            if (SeperateInput[count][0] == '<')
             { // 接收
                 to = myIndex;
                 from = targetIndex;
-                if (userPipe.count(to) && userPipe[to].count(from))
-                {
-                    //* 存在pipe 可以儲存pipeInfrom
-                    parseCommand[parseCommandLine].pipeFrom = from;
-                    broadcast(RECV, c, msg, clients[from].fd);
-                }
-                else
+                if ((from < clients.size() && from > 0 && clients[from] != NULL) && (!userPipe[to].count(from)))
                 {
                     //* 不存在pipe
-                    cout << " *** Error: the pipe #" << from << "->#" << to << " does not exist yet. ***" << endl;
-                    return 1;
+                    broadcast(ERROR_PIPE_NOT_EXIST, c, "", 0, from);
+                    parseCommand[parseCommandLine].pipeFrom = 0;
                 }
+                else
+                    //* 存在pipe 可以儲存pipeInfrom
+                    parseCommand[parseCommandLine].pipeFrom = from;
             }
             else
             { // 傳出
+
                 to = targetIndex;
                 from = myIndex;
+
                 // TODO: 1.創建對方的map 2. 創建對方對應自己的map 3. 建立pipe
-                //* 1. 確定對方的map是否存在 存在進2. 不存在將其建立起來
+                //* 1. 確定對方是否存在與對方的map是否存在 存在進2. 不存在將其建立起來
+                if (!(to > 0 && to < clients.size() && clients[to] != NULL))
+                {
+                    parseCommand[parseCommandLine].pipeTo = to;
+                    count++;
+
+                    continue;
+                }
+
                 if (!userPipe.count(to))
                 {
                     map<int, int *> newChildMap;
@@ -405,8 +404,10 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
                 //* 2. 確認對方對於自己的pipe是否存在 存在表示前面pipe過東西對方還沒接收 不存在即可存進3.
                 if (userPipe[to].count(from))
                 {
-                    cout << " *** Error: the pipe #" << from << "->#" << to << " already exists. ***" << endl;
-                    return 1;
+                    broadcast(ERROR_PIPE_IS_EXIST, c, "", 0, to);
+                    parseCommand[parseCommandLine].pipeTo = 0;
+                    count++;
+                    continue;
                 }
 
                 //* 3. 建立pipe並儲存pipeInform到parseCommand[parseCommandLine]
@@ -415,21 +416,11 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
                     perror("userPipe error");
 
                 parseCommand[parseCommandLine].pipeTo = to;
-                broadcast(SEND, c, msg, clients[to].fd);
             }
-
-            if (count != SeperateInput.size() - 1)
-            {
-                myCommandLine newCommand;
-                parseCommand.push_back(newCommand);
-                parseCommandLine++;
-            }
-            count++;
-            if (count == SeperateInput.size())
-                break;
         }
+        else
+            parseCommand[parseCommandLine].inputCommand.push_back(SeperateInput[count]);
 
-        parseCommand[parseCommandLine].inputCommand.push_back(SeperateInput[count]);
         count++;
     }
 
@@ -438,6 +429,31 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
     {
         if (pipe(pipeArray[i % 2]) < 0)
             perror("pipe gen failed");
+
+        // * handle userPipe in
+        if (parseCommand[i].pipeFrom != -1)
+        {
+            if (parseCommand[i].pipeFrom >= clients.size() || parseCommand[i].pipeFrom <= 0 || clients[parseCommand[i].pipeFrom] == NULL || parseCommand[i].pipeFrom == 0)
+            {
+                if (parseCommand[i].pipeFrom != 0)
+                    broadcast(ERROR_USER, c, "", 0, parseCommand[i].pipeFrom);
+            }
+            else
+                broadcast(RECV, c, msg, clients[parseCommand[i].pipeFrom]->fd, 0);
+        }
+
+        // * handle userPipe Out
+        if (parseCommand[i].pipeTo != -1)
+        {
+            if (parseCommand[i].pipeTo >= clients.size() || parseCommand[i].pipeTo <= 0 || clients[parseCommand[i].pipeTo] == NULL || parseCommand[i].pipeTo == 0)
+            {
+                if (parseCommand[i].pipeTo != 0)
+                    broadcast(ERROR_USER, c, "", 0, parseCommand[i].pipeTo);
+            }
+            else
+                broadcast(SEND, c, msg, clients[parseCommand[i].pipeTo]->fd, 0);
+    
+        }
 
         pid = fork();
         if (pid == 0) // child process
@@ -487,22 +503,40 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
             // * handle userPipe in
             if (parseCommand[i].pipeFrom != -1)
             {
-                int *ptr = userPipe[myIndex][parseCommand[i].pipeFrom];
-                close(ptr[1]);
-                dup2(ptr[0], 0);
-                close(ptr[0]);
+                if (parseCommand[i].pipeFrom >= clients.size() || parseCommand[i].pipeFrom <= 0 || clients[parseCommand[i].pipeFrom] == NULL || parseCommand[i].pipeFrom == 0)
+                {
+                    int nul = open("/dev/null", O_RDWR);
+                    dup2(nul, 0);
+                    close(nul);
+                }
+                else
+                {
+                    int *ptr = userPipe[myIndex][parseCommand[i].pipeFrom];
+                    close(ptr[1]);
+                    dup2(ptr[0], 0);
+                    close(ptr[0]);
+                }
             }
 
             // * handle userPipe Out
             if (parseCommand[i].pipeTo != -1)
             {
-                int *ptr = userPipe[parseCommand[i].pipeTo][myIndex];
-                close(ptr[0]);
-                dup2(ptr[1], 1);
-                close(ptr[1]);
+                if (parseCommand[i].pipeTo >= clients.size() || parseCommand[i].pipeTo <= 0 || clients[parseCommand[i].pipeTo] == NULL || parseCommand[i].pipeTo == 0)
+                {
+                    int nul = open("/dev/null", O_RDWR);
+                    dup2(nul, 1);
+                    close(nul);
+                }
+                else
+                {
+                    int *ptr = userPipe[parseCommand[i].pipeTo][myIndex];
+                    close(ptr[0]);
+                    dup2(ptr[1], 1);
+                    close(ptr[1]);
+                }
             }
 
-            executeFunction(parseCommand[i], fd);
+            executeFunction(parseCommand[i]);
         }
         else if (pid > 0) // parent  process
         {
@@ -523,7 +557,7 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
             }
 
             // * close userpipe
-            if (parseCommand[i].pipeFrom != -1)
+            if (parseCommand[i].pipeFrom != -1 && !(parseCommand[i].pipeFrom >= clients.size() || parseCommand[i].pipeFrom <= 0 || clients[parseCommand[i].pipeFrom] == NULL))
             {
                 int *ptr = userPipe[myIndex][parseCommand[i].pipeFrom];
                 close(ptr[1]);
@@ -551,7 +585,7 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
     return 1;
 }
 
-void executeFunction(myCommandLine tag, int fd)
+void executeFunction(myCommandLine tag)
 {
     const char **arg = new const char *[tag.inputCommand.size() + 1];
     for (int i = 0; i < tag.inputCommand.size(); i++)
@@ -589,15 +623,16 @@ void who(int fd)
     printf("<ID>\t<nickname>\t<IP:port>\t<indicate me>\n");
     for (int index = 1; index < clients.size(); index++)
     {
-        client c = clients[index];
-        if (c.fd == fd)
-        {
-            printf("%d\t%s\t%s\t<-me\n", index, c.name.c_str(), c.ip.c_str());
-        }
-        else
-        {
-            printf("%d\t%s\t%s\t\n", index, c.name.c_str(), c.ip.c_str());
-        }
+        client *c = clients[index];
+        if (c != NULL)
+            if (c->fd == fd)
+            {
+                printf("%d\t%s\t%s\t<-me\n", index, c->name.c_str(), c->ip.c_str());
+            }
+            else
+            {
+                printf("%d\t%s\t%s\t\n", index, c->name.c_str(), c->ip.c_str());
+            }
     }
 }
 
@@ -612,12 +647,14 @@ void name(int fd, string name)
     int clientIndex = -1;
     for (int index = 1; index < clients.size(); index++)
     {
-        if (clients[index].name == name)
+        if (clients[index] == NULL)
+            continue;
+        if (clients[index]->name == name)
         {
             havSame = true;
             break;
         }
-        if (clients[index].fd == fd)
+        if (clients[index]->fd == fd)
         {
             clientIndex = index;
         }
@@ -628,17 +665,26 @@ void name(int fd, string name)
         fflush(stdout);
         return;
     }
-    clients[clientIndex].name = name;
-    broadcast(NAME, &clients[clientIndex], "", 0);
+    clients[clientIndex]->name = name;
+    broadcast(NAME, clients[clientIndex], "", 0, 0);
     return;
 }
 
-void broadcast(BROADCAST_TYPE type, client *from, string msg, int targetFD)
+void broadcast(BROADCAST_TYPE type, client *from, string msg, int targetFD, int targetIndex)
 {
     char buf[BUFSIZE];
     memset(buf, 0, sizeof(char) * BUFSIZE);
 
     int indexFrom, indexTarget;
+    for (int i = 1; i < clients.size(); i++)
+    {
+        if (clients[i] == NULL)
+            continue;
+        if (from->fd == clients[i]->fd)
+            indexFrom = i;
+        if (clients[i]->fd == targetFD)
+            indexTarget = i;
+    }
     switch (type)
     {
     case LOGIN:
@@ -648,7 +694,7 @@ void broadcast(BROADCAST_TYPE type, client *from, string msg, int targetFD)
         sprintf(buf, "*** User '%s' left. ***\n", from->name.c_str());
         break;
     case NAME:
-        sprintf(buf, "*** User from '%s' is named '%s'. ***\n", from->ip.c_str(), from->name.c_str());
+        sprintf(buf, "*** User from %s is named '%s'. ***\n", from->ip.c_str(), from->name.c_str());
         break;
     case YELL:
         sprintf(buf, "*** %s yelled ***: %s\n", from->name.c_str(), msg.c_str());
@@ -657,24 +703,19 @@ void broadcast(BROADCAST_TYPE type, client *from, string msg, int targetFD)
         sprintf(buf, "*** %s told you ***: %s\n", from->name.c_str(), msg.c_str());
         break;
     case SEND:
-        for (int i = 1; i < clients.size(); i++)
-        {
-            if (from->fd == clients[i].fd)
-                indexFrom = i;
-            if (clients[i].fd == targetFD)
-                indexTarget = i;
-        }
-        sprintf(buf, "*** %s (#%d) just piped '%s' to %s (#%d) ***\n", from->name.c_str(), indexFrom, msg.c_str(), clients[indexTarget].name.c_str(), indexTarget);
+        sprintf(buf, "*** %s (#%d) just piped '%s' to %s (#%d) ***\n", from->name.c_str(), indexFrom, msg.c_str(), clients[indexTarget]->name.c_str(), indexTarget);
         break;
     case RECV:
-        for (int i = 1; i < clients.size(); i++)
-        {
-            if (from->fd == clients[i].fd)
-                indexFrom = i;
-            if (clients[i].fd == targetFD)
-                indexTarget = i;
-        }
-        sprintf(buf, "*** %s (#%d) just received from %s (#%d) by '%s' ***\n", from->name.c_str(), indexFrom, clients[indexTarget].name.c_str(), indexTarget, msg.c_str());
+        sprintf(buf, "*** %s (#%d) just received from %s (#%d) by '%s' ***\n", from->name.c_str(), indexFrom, clients[indexTarget]->name.c_str(), indexTarget, msg.c_str());
+        break;
+    case ERROR_USER:
+        sprintf(buf, "*** Error: user #%d does not exist yet. ***\n", targetIndex);
+        break;
+    case ERROR_PIPE_NOT_EXIST:
+        sprintf(buf, "*** Error: the pipe #%d->#%d does not exist yet. ***\n", targetIndex, indexFrom);
+        break;
+    case ERROR_PIPE_IS_EXIST:
+        sprintf(buf, "*** Error: the pipe #%d->#%d already exists. ***\n", indexFrom, targetIndex);
         break;
     default:
         break;
@@ -689,20 +730,52 @@ void broadcast(BROADCAST_TYPE type, client *from, string msg, int targetFD)
         }
         return;
     }
+    if (type == ERROR_USER || type == ERROR_PIPE_NOT_EXIST || type == ERROR_PIPE_IS_EXIST)
+    {
+        if (send(from->fd, output.c_str(), output.size(), 0) < 0)
+        {
+            perror("tell/send");
+        }
+        return;
+    }
     for (int fd = 0; fd < nfds; fd++)
         if (fd != msock && FD_ISSET(fd, &afds))
             if (send(fd, output.c_str(), output.size(), 0) < 0)
                 perror("broadcast/send");
 }
 
-void logoutControl(int fd)
+void logoutControl(int fd, int clientIndex)
 {
     for (int i = 1; i < clients.size(); i++)
     {
-        if (clients[i].fd == fd){
-            clients.erase(clients.begin() + i);
-            userPipe.erase(i); 
-            break;   
-        }
+        if (clients[i] != NULL)
+            if (clients[i]->fd == fd)
+            {
+                clients[i] = NULL;
+                userPipe.erase(i);
+            }
+            else
+            {
+                userPipe[i].erase(clientIndex);
+            }
     }
+}
+char *printEnv(string variable, client *c)
+{
+    if (c->environment.count(variable))
+        return (char *)(c->environment[variable].c_str());
+
+    if (getenv(variable.c_str()) != NULL)
+        return getenv(variable.c_str());
+}
+int setEnv(string s1, string s2, client *c)
+{
+    c->environment[s1] = s2;
+    if (setenv(s1.c_str(), s2.c_str(), 1) == -1)
+    {
+        cerr << "setenv error" << endl;
+        return (-1);
+    };
+
+    return 1;
 }
