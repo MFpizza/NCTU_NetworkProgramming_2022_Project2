@@ -34,6 +34,7 @@ int main(int argc, char *argv[])
 
     int port = (argc > 1) ? atoi(argv[1]) : 7000;
     cout << "[Port]: " << port << endl;
+    clients.resize(1);
     struct sockaddr_in fsin;
 
     int alen;
@@ -49,9 +50,11 @@ int main(int argc, char *argv[])
     {
         memcpy(&rfds, &afds, sizeof(rfds));
 
-        if (select(nfds, &rfds, (fd_set *)0, (fd_set *)0, (struct timeval *)0) < 0)
-            perror("select");
-
+        int err,stat;
+        do{
+            stat = select(nfds, &rfds, (fd_set *)0, (fd_set *)0, (struct timeval *)0);
+            if( stat< 0) err = errno;
+        } while ((stat < 0) && (err == EINTR)); // 被signal跳出去了，要讓他重跑
         if (FD_ISSET(msock, &rfds))
         {
             int ssock;
@@ -63,12 +66,12 @@ int main(int argc, char *argv[])
             char colon[] = ":";
             string ip = inet_ntoa(fsin.sin_addr);
             ip = ip + ":" + to_string(ntohs(fsin.sin_port));
-            client nC = {clients.size() + 1, ssock, "(no name)", ip};
+            client nC = {ssock, "(no name)", ip};
             clients.push_back(nC);
 
             send(ssock, welcome, sizeof(welcome), 0);
 
-            broadcast(LOGIN, nC, "", 0);
+            broadcast(LOGIN, &nC, "", 0);
 
             send(ssock, "% ", 2, 0);
         }
@@ -78,16 +81,18 @@ int main(int argc, char *argv[])
             {
                 if (shellwithFD(fd) < 1)
                 {
-                    client c;
+                    client *c;
                     for (int clientIndex = 0; clientIndex < clients.size(); clientIndex++)
                     {
                         if (clients[clientIndex].fd == fd)
                         {
-                            c = clients[clientIndex];
+                            c = &clients[clientIndex];
                             break;
                         }
                     }
                     broadcast(LOGOUT, c, "", 0);
+                    //TODO: logoutControl 要處理map裡面的pipe是否有殘留;
+                    logoutControl(fd);
                     close(fd);
                     // cout << "fd:" << fd << " is closed" << endl;
                     FD_CLR(fd, &afds);
