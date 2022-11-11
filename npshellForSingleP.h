@@ -287,8 +287,6 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
     vector<myCommandLine> parseCommand;
     parseCommand.resize(1);
 
-    bool hasNumberPipe = false;
-
     int myIndex;
     for (int clientIndex = 1; clientIndex < clients.size(); ++clientIndex)
     {
@@ -314,7 +312,6 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
                 SeperateInput[count].erase(SeperateInput[count].begin());
                 int Number = atoi(SeperateInput[count].c_str());
 
-                hasNumberPipe = true;
                 bool hasPipe = false;
                 parseCommand[parseCommandLine].numberPipe = true;
 
@@ -381,7 +378,6 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
             }
             else
             { // 傳出
-
                 to = targetIndex;
                 from = myIndex;
 
@@ -391,7 +387,6 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
                 {
                     parseCommand[parseCommandLine].pipeTo = to;
                     count++;
-
                     continue;
                 }
 
@@ -564,6 +559,14 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
                 close(ptr[0]);
                 userPipe[myIndex].erase(parseCommand[i].pipeFrom);
             }
+
+            if(parseCommand.size() -1 == i)
+                if (!parseCommand[i].numberPipe && !(parseCommand[i].pipeTo != -1))
+                {
+                    while ((wpid = wait(&status)) > 0)
+                    {
+                    };
+                }
         }
         else // fork error
         {
@@ -574,14 +577,6 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
             continue;
         }
     }
-
-    if (!hasNumberPipe)
-    {
-        while ((wpid = wait(&status)) > 0)
-        {
-        };
-    }
-
     return 1;
 }
 
