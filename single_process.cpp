@@ -78,7 +78,7 @@ int main(int argc, char *argv[])
             if (ssock < 0)
                 perror("accept");
             FD_SET(ssock, &afds);
-            char colon[] = ":";
+            
             string ip = inet_ntoa(fsin.sin_addr);
             ip = ip + ":" + to_string(ntohs(fsin.sin_port));
             client *nC = new client(ssock, "(no name)", ip);

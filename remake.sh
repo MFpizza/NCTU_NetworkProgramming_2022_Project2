@@ -1,2 +1,2 @@
 make
-./np_single_proc 1234
+./np_multi_proc 1234

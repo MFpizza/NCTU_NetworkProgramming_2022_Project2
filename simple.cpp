@@ -51,15 +51,15 @@ int main(int argc,char* argv[]){
         ssock = accept(msock,(struct sockaddr*)&child_addr,(socklen_t*)&addrlen); // slave socket fd
         if(ssock<0)
             perror("S/Accept");
-        
+        cout<<"ssock fd:"<<ssock<<endl;
+
         int pid = fork();
         while(pid < 0){
             usleep(500);
             pid = fork();
         }
         if(pid>0){
-            close(ssock);
-            // shell();
+            // close(ssock);
             cout<<"end"<<endl;
         }
         else{
