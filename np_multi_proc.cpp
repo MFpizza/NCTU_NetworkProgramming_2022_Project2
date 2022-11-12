@@ -1,21 +1,30 @@
 #include "np_multi_proc.h"
 
-void logoutControl(int fd, int clientIndex)
+void logoutControl(int pid)
 {
-
-    for (int i = 1; i < MAX_CLIENT; i++)
+    int fd, clientIndex;
+    for (int index = 1; index < MAX_CLIENT; index++)
     {
-        if (clients[i].used)
-            if (clients[i].fd == fd)
-            {
-                clients[i].used = false;
-                userPipe.erase(i);
-            }
-            else
-            {
-                userPipe[i].erase(clientIndex);
-            }
+        if (clients[index].pid == pid)
+        {
+            broadcast(LOGOUT, clients[index].fd, "", 0, 0);
+            clients[index].used = false;
+            close(clients[index].fd);
+            break;
+        }
     }
+    // for (int i = 1; i < MAX_CLIENT; i++)
+    // {
+    //     if (clients[i].used)
+    //         if (clients[i].fd == fd)
+    //         {
+    //             userPipe.erase(i);
+    //         }
+    //         else
+    //         {
+    //             userPipe[i].erase(clientIndex);
+    //         }
+    // }
 }
 
 // TODO: 創建一個signal handler 處理client離開的事情
@@ -28,21 +37,10 @@ void ServerSignalHandler(int sig)
     }
     else if (sig == SIGCHLD)
     {
+        cout << "child exit" << endl;
         int pid, status;
-        while ((pid = wait(&status)) > 0)
-        {
-
-            for (int index = 1; index < MAX_CLIENT; index++)
-            {
-                if (clients[index].pid == pid)
-                {
-                    broadcast(LOGOUT, clients[index].fd, "", 0, 0);
-                    logoutControl(clients[index].fd, index);
-                    close(clients[index].fd);
-                    break;
-                }
-            }
-        };
+        pid = wait(&status);
+        logoutControl(pid);
     }
     else if (sig == SIGINT)
     {
@@ -61,15 +59,15 @@ void ServerSignalHandler(int sig)
 
         if (munmap(clients, sizeof(client) * MAX_CLIENT) < 0)
             perror("munmap clients");
-        if(remove("./shared_memory/clientsSharedMemory")<0)
+        if (remove("./shared_memory/clientsSharedMemory") < 0)
             perror("rm cs");
 
         if (munmap(BM, sizeof(broadcastMsg)) < 0)
             perror("munmap BM");
-        if(remove("./shared_memory/broadcastSharedMemory")<0)
+        if (remove("./shared_memory/broadcastSharedMemory") < 0)
             perror("rm bs");
-        
-        if(rmdir("./shared_memory/")<0)
+
+        if (rmdir("./shared_memory/") < 0)
             perror("rmdir");
         exit(0);
     }
