@@ -766,18 +766,14 @@ void printClients(int h)
 void initMMap()
 {
     csfile = SM_PATH + "clientsSharedMemory";
-    if (remove(csfile.c_str()) < 0)
-        perror("rm cs");
     clients_shared_momory_fd = open(csfile.c_str(), O_CREAT | O_RDWR, 00777);
     ftruncate(clients_shared_momory_fd, sizeof(client) * MAX_CLIENT);
     clients = (client *)mmap(NULL, sizeof(client) * MAX_CLIENT, PROT_READ | PROT_WRITE, MAP_SHARED, clients_shared_momory_fd, 0);
     if (clients == MAP_FAILED)
         perror("mmap");
-    cout << "[Server] mmap init with clients ptr: " << clients << endl;
+    cout<<"[Server] mmap init with clients ptr: "<<clients<<endl;
 
     bmfile = SM_PATH + "broadcastSharedMemory";
-    if (remove(bmfile.c_str()) < 0)
-        perror("rm bm");
     broadcast_shared_momory_fd = open(bmfile.c_str(), O_CREAT | O_RDWR, 00777);
     ftruncate(broadcast_shared_momory_fd, sizeof(broadcastMsg) * MAX_BROADCAST);
     BM = (broadcastMsg *)mmap(NULL, sizeof(broadcastMsg) * MAX_BROADCAST, PROT_READ | PROT_WRITE, MAP_SHARED, broadcast_shared_momory_fd, 0);
@@ -787,12 +783,10 @@ void initMMap()
 
 int main(int argc, char *argv[])
 {
-    string path(getpwuid(getuid())->pw_dir);
     signal(SIGCHLD, ServerSignalHandler);
     signal(SIGINT, ServerSignalHandler);
     signal(SIGUSR1, ServerSignalHandler);
 
-    SM_PATH = string(path) + "/" + SM_PATH;
     if (NULL == opendir(USERPIPE_PATH.c_str()))
         mkdir(USERPIPE_PATH.c_str(), 0777);
     if (NULL == opendir(SM_PATH.c_str()))

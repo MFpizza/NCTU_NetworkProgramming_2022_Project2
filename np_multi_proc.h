@@ -27,8 +27,8 @@ using namespace std;
 #define BUFSIZE 4096
 #define MAX_CLIENT 31
 #define MAX_BROADCAST 10
-string USERPIPE_PATH = "user_pipe/";
-string SM_PATH = "shared_memory/";
+#define USERPIPE_PATH string("user_pipe/")
+#define SM_PATH string("user_pipe/")
 string csfile;
 string bmfile;
 
