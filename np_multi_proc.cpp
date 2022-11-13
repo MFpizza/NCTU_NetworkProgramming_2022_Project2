@@ -1,149 +1,4 @@
 #include "np_multi_proc.h"
-#include <iostream>
-#include <string.h>
-#include <vector>
-#include <unistd.h>
-#include <filesystem>
-#include <stdlib.h>
-#include <signal.h>
-#include <vector>
-#include <fcntl.h>
-#include <fstream>
-#include <pwd.h>
-#include <algorithm>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <errno.h>
-#include <arpa/inet.h>
-#include <map>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/wait.h>
-#include <sys/stat.h>
-#include <sys/mman.h>
-#include <dirent.h>
-using namespace std;
-#define LISTEN_BACKLOG 50
-#define QLEN 5
-#define BUFSIZE 4096
-#define MAX_CLIENT 31
-#define MAX_BROADCAST 10
-#define USERPIPE_PATH "user_pipe/"
-#define SM_PATH "shared_memory/"
-
-typedef enum
-{
-    LOGIN = 0,
-    LOGOUT,
-    NAME,
-    YELL,
-    TELL,
-    SEND,
-    RECV,
-    ERROR_USER,
-    ERROR_PIPE_NOT_EXIST,
-    ERROR_PIPE_IS_EXIST
-} BROADCAST_TYPE;
-
-struct myNumberPipe
-{
-    int number;            // Next number time to pipe the output
-    int IndexOfGlobalPipe; // Index of global pipe
-};
-
-struct myCommandLine
-{
-    vector<string> inputCommand; // store the command line
-    bool numberPipe = false;     // true if there is a number pipe command
-    int numberPipeIndex = -1;    // 還在思考要用甚麼方式來儲存numberPipe
-    bool errPipeNeed = false;    // true if there is a pipe command be
-    int pipeTo = -1;             // index of userpipe To
-    int fifoToFD = -1;
-    int pipeFrom = -1; // index of userpipe From
-    int fifoFromFD = -1;
-};
-
-struct client
-{
-    int fd = -1;
-    char name[40];
-    char ip[INET6_ADDRSTRLEN];
-    int pid = -1;
-    bool used = false;
-};
-
-struct broadcastMsg
-{
-    char msg[BUFSIZE];
-    bool used = false;
-    int toFD = 0; // 0 = broadcast other is client index
-};
-
-int userPipeFDArray[31] = {0};
-vector<myNumberPipe> NumberPipeArray;
-int GlobalPipe[1000][2];
-bool GlobalPipeUsed[1000];
-
-int msock; // master socket fd
-int ppid;
-int myIndex;
-client *me;
-
-// shared memory
-int clients_shared_momory_fd;
-int broadcast_shared_momory_fd;
-client *clients;
-broadcastMsg *BM;
-
-// 格式 本身自己的fd : 對方的fd 要傳入自己本身的對應的pipe
-
-void executeFunction(myCommandLine tag);
-int parserCommand(vector<string> SeperateInput);
-void broadcast(BROADCAST_TYPE type, int fromFD, string msg, int targetFD, int targetIndex);
-void ServerBroadcast();
-void who();
-void name(string name);
-void logoutControl(int pid);
-char *printEnv(string variable);
-int setEnv(string s1, string s2);
-void printClients(int i);
-
-void signalHandler(int sig)
-{
-    if (sig == SIGCHLD)
-        pid_t pid = wait(NULL);
-    else if (sig == SIGINT)
-    {
-        // cout << "\nchild SIGINT accept" << endl;
-        if (munmap(clients, sizeof(client) * MAX_CLIENT) < 0)
-            perror("munmap");
-        if (munmap(BM, sizeof(broadcastMsg)) < 0)
-            perror("munmap BM");
-        exit(0);
-    }
-    // else if (sig == SIGUSR1)
-    // {
-    //     // TODO: 當有client 離開時要去掉他的fifo
-    // }
-    else if (sig == SIGUSR2)
-    {
-        // cout << "accept signal sigusr2" << endl;
-        // TODO: create , open FIFO read
-        for (int i = 1; i < MAX_CLIENT; i++)
-        {
-            if (clients[i].used && userPipeFDArray[i] == 0)
-            {
-                string fifoName = USERPIPE_PATH + to_string(myIndex * 30 + i);
-                int readFD = open(fifoName.c_str(), 0);
-                if (readFD < 0) // FIFO 不存在
-                    continue;
-                userPipeFDArray[i] = readFD;
-            }
-        }
-    }
-    else
-        cout << "accept sig:" << sig << endl;
-}
 
 const char welcome[] =
     "****************************************\n\
@@ -273,7 +128,6 @@ int parserCommand(vector<string> SeperateInput)
     }
     else if (SeperateInput[0] == "exit")
     {
-
         exit(0);
     }
     else if (SeperateInput[0] == "name")
@@ -456,8 +310,9 @@ int parserCommand(vector<string> SeperateInput)
                         continue;
                     }
                 }
+                // cout << "kill sigusr2 pid:" << clients[targetIndex].pid << endl;
                 kill(clients[targetIndex].pid, SIGUSR2);
-                
+
                 //* 3. 建立pipe並儲存pipeInform到parseCommand[parseCommandLine]
                 int writeFD = open(fifoFileName.c_str(), 1);
                 if (writeFD < 0)
@@ -670,6 +525,10 @@ void executeFunction(myCommandLine tag)
 
 void who()
 {
+    // for (int index = 1; index < 5; index++)
+    // {
+    //     printClients(index);
+    // }
     printf("<ID>\t<nickname>\t<IP:port>\t<indicate me>\n");
     for (int index = 1; index < MAX_CLIENT; index++)
     {
@@ -733,11 +592,13 @@ int setEnv(string s1, string s2)
 
 void logoutControl(int pid)
 {
+    cout << "[Server] clients ptr:" << clients << endl;
     int fd, closeClientIndex;
     for (int index = 1; index < MAX_CLIENT; index++)
     {
-        if (clients[index].pid == pid)
+        if (clients[index].used && clients[index].pid == pid)
         {
+            printClients(index);
             closeClientIndex = index;
             broadcast(LOGOUT, clients[index].fd, "", 0, 0);
             clients[index].used = false;
@@ -757,6 +618,35 @@ void logoutControl(int pid)
     }
 }
 
+void signalHandler(int sig)
+{
+    if (sig == SIGCHLD)
+        pid_t pid = wait(NULL);
+    else if (sig == SIGINT)
+    {
+        // cout << "\nchild SIGINT accept" << endl;
+        exit(0);
+    }
+    else if (sig == SIGUSR2)
+    {
+        // cout << "accept signal sigusr2" << endl;
+        // TODO: create , open FIFO read
+        for (int i = 1; i < MAX_CLIENT; i++)
+        {
+            if (clients[i].used && userPipeFDArray[i] == 0)
+            {
+                string fifoName = USERPIPE_PATH + to_string(myIndex * 30 + i);
+                int readFD = open(fifoName.c_str(), 0);
+                if (readFD < 0) // FIFO 不存在
+                    continue;
+                userPipeFDArray[i] = readFD;
+            }
+        }
+    }
+    else
+        cout << "accept sig:" << sig << endl;
+}
+
 // TODO: 創建一個signal handler 處理client離開的事情
 void ServerSignalHandler(int sig)
 {
@@ -767,9 +657,9 @@ void ServerSignalHandler(int sig)
     }
     else if (sig == SIGCHLD)
     {
-        cout << "child exit" << endl;
         int pid, status;
         pid = wait(&status);
+        cout << "[SigChld]: child pid " << pid << " exit" << endl;
         logoutControl(pid);
     }
     else if (sig == SIGINT)
@@ -782,7 +672,7 @@ void ServerSignalHandler(int sig)
         {
             if (clients[index].used)
             {
-                cout << clients[index].pid << endl;
+                cout << "[SigInt]: interrupt pid:" << clients[index].pid << endl;
                 kill(clients[index].pid, SIGINT);
             }
         }
@@ -800,15 +690,15 @@ void ServerSignalHandler(int sig)
         if (rmdir("./shared_memory/") < 0)
             perror("rmdir");
 
-        for (int i = 1; i < MAX_CLIENT; i++)
-        {
-            for (int j = 1; j < MAX_CLIENT; j++)
-            {
-                string fifoFileName = "./user_pipe/" + to_string(30 * (i) + j);
-                if ((unlink(fifoFileName.c_str()) < 0) && (errno != ENOENT))
-                    perror("unlink");
-            }
-        }
+        // for (int i = 1; i < MAX_CLIENT; i++)
+        // {
+        //     for (int j = 1; j < MAX_CLIENT; j++)
+        //     {
+        //         string fifoFileName = "./user_pipe/" + to_string(30 * (i) + j);
+        //         if ((unlink(fifoFileName.c_str()) < 0) && (errno != ENOENT))
+        //             perror("unlink");
+        //     }
+        // }
 
         if (rmdir("./user_pipe/") < 0)
             perror("rmdir");
@@ -864,12 +754,13 @@ void newClientHandler(int fd, string name, string ip, int pid)
     }
 }
 
-void printClients(int i)
+void printClients(int h)
 {
-    for (int h = 0; h <= i; h++)
-    {
-        printf("clients[%d]: \n\t used:\t%d\n\t fd:\t%d\n\t pid:\t%d\n\t name:\t%s\n", h, clients[h].used, clients[h].fd, clients[h].pid, clients[h].name);
-    }
+    printf("clients[%d]: \n", h);
+    printf("\t used:\t%d\n", clients[h].used);
+    printf("\t fd:\t%d\n", clients[h].fd);
+    printf("\t pid:\t%d\n", clients[h].pid);
+    printf("\t name:\t%s\n", clients[h].name);
 }
 
 void initMMap()
@@ -879,25 +770,13 @@ void initMMap()
     clients = (client *)mmap(NULL, sizeof(client) * MAX_CLIENT, PROT_READ | PROT_WRITE, MAP_SHARED, clients_shared_momory_fd, 0);
     if (clients == MAP_FAILED)
         perror("mmap");
+    cout<<"[Server] mmap init with clients ptr: "<<clients<<endl;
 
     broadcast_shared_momory_fd = open("./shared_memory/broadcastSharedMemory", O_CREAT | O_RDWR, 00777);
     ftruncate(broadcast_shared_momory_fd, sizeof(broadcastMsg) * MAX_BROADCAST);
     BM = (broadcastMsg *)mmap(NULL, sizeof(broadcastMsg) * MAX_BROADCAST, PROT_READ | PROT_WRITE, MAP_SHARED, broadcast_shared_momory_fd, 0);
     if (BM == MAP_FAILED)
         perror("mmap");
-}
-
-void initFIFO()
-{
-    for (int i = 1; i < MAX_CLIENT; i++)
-    {
-        for (int j = 1; j < MAX_CLIENT; j++)
-        {
-            string fifoFileName = "./user_pipe/" + to_string(30 * (i) + j);
-            if ((mknod(fifoFileName.c_str(), S_IFIFO, 0) < 0) && (errno != EEXIST))
-                perror("mknod");
-        }
-    }
 }
 
 int main(int argc, char *argv[])
@@ -912,7 +791,6 @@ int main(int argc, char *argv[])
         mkdir(SM_PATH, 0777);
 
     initMMap();
-    // initFIFO();
     int port = (argc > 1) ? atoi(argv[1]) : 7000;
     cout << "[Port]: " << port << endl;
     struct sockaddr_in fsin;
@@ -930,6 +808,7 @@ int main(int argc, char *argv[])
     while (true)
     {
         alen = sizeof(fsin);
+        cout << "[Server]: waiting a accept" << endl;
         int ssock = accept(msock, (struct sockaddr *)&fsin, (socklen_t *)&alen);
         if (ssock < 0)
         {
