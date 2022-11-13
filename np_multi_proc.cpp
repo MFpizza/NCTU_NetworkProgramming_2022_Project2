@@ -783,10 +783,12 @@ void initMMap()
 
 int main(int argc, char *argv[])
 {
+    string path(getpwuid(getuid())->pw_dir);
     signal(SIGCHLD, ServerSignalHandler);
     signal(SIGINT, ServerSignalHandler);
     signal(SIGUSR1, ServerSignalHandler);
 
+    SM_PATH = string(path)+ "/" + SM_PATH;
     if (NULL == opendir(USERPIPE_PATH.c_str()))
         mkdir(USERPIPE_PATH.c_str(), 0777);
     if (NULL == opendir(SM_PATH.c_str()))
