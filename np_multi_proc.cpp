@@ -679,15 +679,15 @@ void ServerSignalHandler(int sig)
 
         if (munmap(clients, sizeof(client) * MAX_CLIENT) < 0)
             perror("munmap clients");
-        if (remove("./shared_memory/clientsSharedMemory") < 0)
+        if (remove(csfile.c_str()) < 0)
             perror("rm cs");
 
         if (munmap(BM, sizeof(broadcastMsg)) < 0)
             perror("munmap BM");
-        if (remove("./shared_memory/broadcastSharedMemory") < 0)
+        if (remove(bmfile.c_str()) < 0)
             perror("rm bs");
 
-        if (rmdir("./shared_memory/") < 0)
+        if (rmdir(SM_PATH.c_str()) < 0)
             perror("rmdir");
 
         // for (int i = 1; i < MAX_CLIENT; i++)
@@ -700,7 +700,7 @@ void ServerSignalHandler(int sig)
         //     }
         // }
 
-        if (rmdir("./user_pipe/") < 0)
+        if (rmdir(USERPIPE_PATH.c_str()) < 0)
             perror("rmdir");
         exit(0);
     }
@@ -765,14 +765,16 @@ void printClients(int h)
 
 void initMMap()
 {
-    clients_shared_momory_fd = open("./shared_memory/clientsSharedMemory", O_CREAT | O_RDWR, 00777);
+    csfile = SM_PATH + "clientsSharedMemory";
+    clients_shared_momory_fd = open(csfile.c_str(), O_CREAT | O_RDWR, 00777);
     ftruncate(clients_shared_momory_fd, sizeof(client) * MAX_CLIENT);
     clients = (client *)mmap(NULL, sizeof(client) * MAX_CLIENT, PROT_READ | PROT_WRITE, MAP_SHARED, clients_shared_momory_fd, 0);
     if (clients == MAP_FAILED)
         perror("mmap");
     cout<<"[Server] mmap init with clients ptr: "<<clients<<endl;
 
-    broadcast_shared_momory_fd = open("./shared_memory/broadcastSharedMemory", O_CREAT | O_RDWR, 00777);
+    bmfile = SM_PATH + "broadcastSharedMemory";
+    broadcast_shared_momory_fd = open(bmfile.c_str(), O_CREAT | O_RDWR, 00777);
     ftruncate(broadcast_shared_momory_fd, sizeof(broadcastMsg) * MAX_BROADCAST);
     BM = (broadcastMsg *)mmap(NULL, sizeof(broadcastMsg) * MAX_BROADCAST, PROT_READ | PROT_WRITE, MAP_SHARED, broadcast_shared_momory_fd, 0);
     if (BM == MAP_FAILED)
@@ -785,10 +787,10 @@ int main(int argc, char *argv[])
     signal(SIGINT, ServerSignalHandler);
     signal(SIGUSR1, ServerSignalHandler);
 
-    if (NULL == opendir(USERPIPE_PATH))
-        mkdir(USERPIPE_PATH, 0777);
-    if (NULL == opendir(SM_PATH))
-        mkdir(SM_PATH, 0777);
+    if (NULL == opendir(USERPIPE_PATH.c_str()))
+        mkdir(USERPIPE_PATH.c_str(), 0777);
+    if (NULL == opendir(SM_PATH.c_str()))
+        mkdir(SM_PATH.c_str(), 0777);
 
     initMMap();
     int port = (argc > 1) ? atoi(argv[1]) : 7000;
@@ -829,13 +831,13 @@ int main(int argc, char *argv[])
             string ip = inet_ntoa(fsin.sin_addr);
             ip = ip + ":" + to_string(ntohs(fsin.sin_port));
             newClientHandler(ssock, "(no name)", ip, pid);
-            send(ssock, welcome, sizeof(welcome) - 1, 0);
-            broadcast(LOGIN, ssock, "", 0, 0);
             // close(ssock);
             cout << "end" << endl;
         }
         else
         {
+            send(ssock, welcome, sizeof(welcome) - 1, 0);
+            broadcast(LOGIN, ssock, "", 0, 0);
             dup2(ssock, 0);
             dup2(ssock, 1);
             dup2(ssock, 2);

@@ -1,3 +1,6 @@
 /shared_memory/
 /user_pipe/
 /.vscode/
+/np_simple
+/np_single_proc
+/np_multi_proc
