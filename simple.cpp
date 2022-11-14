@@ -37,7 +37,13 @@ int passiveTCP(int port){
 	return sockfd;
 }
 
+void ServersignalHandler(int sig)
+{
+    pid_t pid = wait(NULL);
+}
+
 int main(int argc,char* argv[]){
+    signal(SIGCHLD, ServersignalHandler);
     int port = (argc>1)? atoi(argv[1]):7000;
     cout<<"[Port]: "<<port<<endl;
     int msock = passiveTCP(port); // master socket fd
