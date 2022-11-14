@@ -43,7 +43,8 @@ typedef enum
     RECV,
     ERROR_USER,
     ERROR_PIPE_NOT_EXIST,
-    ERROR_PIPE_IS_EXIST
+    ERROR_PIPE_IS_EXIST,
+    SERVER
 } BROADCAST_TYPE;
 
 struct myNumberPipe

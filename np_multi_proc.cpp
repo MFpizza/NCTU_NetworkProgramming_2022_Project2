@@ -5,6 +5,7 @@ const char welcome[] =
 ** Welcome to the information server. **\n\
 ****************************************\n";
 
+int serverOutfd = 300;
 /*
  * return 1 with no error and continue
  * return 0 with no error but stop
@@ -43,6 +44,7 @@ int shellwithFD(int fd)
         s.erase(remove(s.begin(), s.end(), '\n'), s.end());
         s.erase(remove(s.begin(), s.end(), '\r'), s.end());
         // cout<<s.size()<<endl;
+        broadcast(SERVER,0,s,0,0);
 
         // 分割當前的指令
         vector<string> lineSplit;
@@ -786,6 +788,7 @@ int main(int argc, char *argv[])
     signal(SIGCHLD, ServerSignalHandler);
     signal(SIGINT, ServerSignalHandler);
     signal(SIGUSR1, ServerSignalHandler);
+    dup2(1,serverOutfd);
 
     if (NULL == opendir(USERPIPE_PATH.c_str()))
         mkdir(USERPIPE_PATH.c_str(), 0777);
@@ -913,6 +916,9 @@ void broadcast(BROADCAST_TYPE type, int fromFD, string msg, int targetFD, int ta
     case ERROR_PIPE_IS_EXIST:
         sprintf(buf, "*** Error: the pipe #%d->#%d already exists. ***\n", indexFrom, targetIndex);
         break;
+    case SERVER:
+        sprintf(buf,"%s",msg.c_str());
+        break;
     default:
         break;
     }
@@ -920,6 +926,9 @@ void broadcast(BROADCAST_TYPE type, int fromFD, string msg, int targetFD, int ta
     if (type == TELL)
     {
         BM->toFD = targetFD;
+    }
+    else if(type==SERVER){
+        BM->toFD = msock;
     }
     else if (type == ERROR_USER || type == ERROR_PIPE_NOT_EXIST || type == ERROR_PIPE_IS_EXIST)
     {
@@ -944,6 +953,9 @@ void ServerBroadcast()
             {
                 if (send(BM[i].toFD, output.c_str(), output.size(), 0) < 0)
                     perror("broadcast/send");
+            }
+            else if(BM[i].toFD==msock){
+                cout<<output<<endl;
             }
             else
             {
