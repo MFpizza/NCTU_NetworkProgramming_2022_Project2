@@ -44,7 +44,7 @@ int shellwithFD(int fd)
         s.erase(remove(s.begin(), s.end(), '\n'), s.end());
         s.erase(remove(s.begin(), s.end(), '\r'), s.end());
         // cout<<s.size()<<endl;
-        broadcast(SERVER,0,s,0,0);
+        broadcast(SERVER, 0, s, 0, 0);
 
         // 分割當前的指令
         vector<string> lineSplit;
@@ -654,14 +654,14 @@ void ServerSignalHandler(int sig)
 {
     if (sig == SIGUSR1)
     {
-        cout << "server SIGUSR1: ready to broadcast" << endl;
+        // cout << "server SIGUSR1: ready to broadcast" << endl;
         ServerBroadcast();
     }
     else if (sig == SIGCHLD)
     {
         int pid, status;
         pid = wait(&status);
-        cout << "[SigChld]: child pid " << pid << " exit" << endl;
+        // cout << "[SigChld]: child pid " << pid << " exit" << endl;
         logoutControl(pid);
     }
     else if (sig == SIGINT)
@@ -758,11 +758,11 @@ void newClientHandler(int fd, string name, string ip, int pid)
 
 void printClients(int h)
 {
-    printf("clients[%d]: \n", h);
-    printf("\t used:\t%d\n", clients[h].used);
-    printf("\t fd:\t%d\n", clients[h].fd);
-    printf("\t pid:\t%d\n", clients[h].pid);
-    printf("\t name:\t%s\n", clients[h].name);
+    // printf("clients[%d]: \n", h);
+    // printf("\t used:\t%d\n", clients[h].used);
+    // printf("\t fd:\t%d\n", clients[h].fd);
+    // printf("\t pid:\t%d\n", clients[h].pid);
+    // printf("\t name:\t%s\n", clients[h].name);
 }
 
 void initMMap()
@@ -773,7 +773,7 @@ void initMMap()
     clients = (client *)mmap(NULL, sizeof(client) * MAX_CLIENT, PROT_READ | PROT_WRITE, MAP_SHARED, clients_shared_momory_fd, 0);
     if (clients == MAP_FAILED)
         perror("mmap");
-    cout<<"[Server] mmap init with clients ptr: "<<clients<<endl;
+    // cout << "[Server] mmap init with clients ptr: " << clients << endl;
 
     bmfile = SM_PATH + "broadcastSharedMemory";
     broadcast_shared_momory_fd = open(bmfile.c_str(), O_CREAT | O_RDWR, 00777);
@@ -788,7 +788,7 @@ int main(int argc, char *argv[])
     signal(SIGCHLD, ServerSignalHandler);
     signal(SIGINT, ServerSignalHandler);
     signal(SIGUSR1, ServerSignalHandler);
-    dup2(1,serverOutfd);
+    dup2(1, serverOutfd);
 
     if (NULL == opendir(USERPIPE_PATH.c_str()))
         mkdir(USERPIPE_PATH.c_str(), 0777);
@@ -813,15 +813,12 @@ int main(int argc, char *argv[])
     while (true)
     {
         alen = sizeof(fsin);
-        cout << "[Server]: waiting a accept" << endl;
         int ssock = accept(msock, (struct sockaddr *)&fsin, (socklen_t *)&alen);
         if (ssock < 0)
         {
-            cout << "fuc" << endl;
             perror("accept");
             continue;
         }
-        cout << ssock << endl;
 
         pid = fork();
         while (pid < 0)
@@ -835,7 +832,7 @@ int main(int argc, char *argv[])
             ip = ip + ":" + to_string(ntohs(fsin.sin_port));
             newClientHandler(ssock, "(no name)", ip, pid);
             // close(ssock);
-            cout << "end" << endl;
+            // cout << "end" << endl;
         }
         else
         {
@@ -917,7 +914,7 @@ void broadcast(BROADCAST_TYPE type, int fromFD, string msg, int targetFD, int ta
         sprintf(buf, "*** Error: the pipe #%d->#%d already exists. ***\n", indexFrom, targetIndex);
         break;
     case SERVER:
-        sprintf(buf,"%s",msg.c_str());
+        sprintf(buf, "%d: %s",myIndex, msg.c_str());
         break;
     default:
         break;
@@ -927,7 +924,8 @@ void broadcast(BROADCAST_TYPE type, int fromFD, string msg, int targetFD, int ta
     {
         BM->toFD = targetFD;
     }
-    else if(type==SERVER){
+    else if (type == SERVER)
+    {
         BM->toFD = msock;
     }
     else if (type == ERROR_USER || type == ERROR_PIPE_NOT_EXIST || type == ERROR_PIPE_IS_EXIST)
@@ -948,17 +946,20 @@ void ServerBroadcast()
     {
         if (BM[i].used)
         {
-            string output(BM[i].msg);
-            if (BM[i].toFD != 0)
+            if (BM[i].toFD == msock)
             {
+                string output(BM[i].msg);
+                cout << output << endl;
+            }
+            else if (BM[i].toFD != 0)
+            {
+                string output(BM[i].msg);
                 if (send(BM[i].toFD, output.c_str(), output.size(), 0) < 0)
                     perror("broadcast/send");
             }
-            else if(BM[i].toFD==msock){
-                cout<<output<<endl;
-            }
             else
             {
+                string output(BM[i].msg);
                 for (int index = 1; index < MAX_CLIENT; index++)
                     if (clients[index].used)
                         if (send(clients[index].fd, output.c_str(), output.size(), 0) < 0)
