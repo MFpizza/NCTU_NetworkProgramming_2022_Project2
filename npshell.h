@@ -47,15 +47,15 @@ int shell()
     cout << "% ";
     while (getline(cin, s))
     {
-       if (s == "")
+        if (s == "")
         {
             cout << "% ";
             continue;
         }
-        
+
         // cout<<s.size()<<endl;
-		s.erase(remove(s.begin(), s.end(), '\n'),s.end());
-		s.erase(remove(s.begin(), s.end(), '\r'),s.end());
+        s.erase(remove(s.begin(), s.end(), '\n'), s.end());
+        s.erase(remove(s.begin(), s.end(), '\r'), s.end());
         // cout<<s.size()<<endl;
 
         // 分割當前的指令
@@ -71,14 +71,16 @@ int shell()
             s.erase(0, pos + delimiter.length());
             if (token[0] == '|' && token.size() > 1)
             {
-                parserCommand(lineSplit);
+                if (parserCommand(lineSplit) == 0)
+                    return 1;
                 lineSplit.clear();
             }
         }
 
         lineSplit.push_back(s);
 
-        parserCommand(lineSplit);
+        if (parserCommand(lineSplit) == 0)
+            return 1;
 
         cout << "% ";
     }
@@ -112,12 +114,12 @@ int findTheGlobalPipeCanUse()
 
 int parserCommand(vector<string> SeperateInput)
 {
-    int NumberPipeNeed = -1,indexInNumberPipe = -1;
+    int NumberPipeNeed = -1, indexInNumberPipe = -1;
     for (int j = 0; j < NumberPipeArray.size(); j++)
     {
         NumberPipeArray[j].number = NumberPipeArray[j].number - 1;
         if (NumberPipeArray[j].number == 0)
-        {   
+        {
             indexInNumberPipe = j;
             NumberPipeNeed = NumberPipeArray[j].IndexOfGlobalPipe;
         }
@@ -142,7 +144,7 @@ int parserCommand(vector<string> SeperateInput)
     }
     else if (SeperateInput[0] == "exit")
     {
-        exit(0);
+        return (0);
     }
 
     pid_t pid, wpid;
@@ -200,22 +202,19 @@ int parserCommand(vector<string> SeperateInput)
                 parseCommand.push_back(newCommand);
                 parseCommandLine++;
             }
-            
+
             count++;
             if (count == SeperateInput.size())
                 break;
-            
         }
         parseCommand[parseCommandLine].inputCommand.push_back(SeperateInput[count]);
         count++;
     }
 
-
-
     int pipeArray[2][2];
     for (int i = 0; i < parseCommand.size(); i++)
     {
-        if(pipe(pipeArray[i%2]) < 0)
+        if (pipe(pipeArray[i % 2]) < 0)
             perror("pipe gen failed");
 
         pid = fork();
@@ -224,21 +223,21 @@ int parserCommand(vector<string> SeperateInput)
             // * front Pipe
             if (i > 0)
             {
-                close(pipeArray[(i-1)%2][1]);
-                dup2(pipeArray[(i-1)%2][0], 0);
-                close(pipeArray[(i-1)%2][0]);
+                close(pipeArray[(i - 1) % 2][1]);
+                dup2(pipeArray[(i - 1) % 2][0], 0);
+                close(pipeArray[(i - 1) % 2][0]);
             }
 
             // * back Pipe
-            if (i != parseCommand.size()-1)
+            if (i != parseCommand.size() - 1)
             {
-                close(pipeArray[i%2][0]);
-                dup2(pipeArray[i%2][1], 1);
+                close(pipeArray[i % 2][0]);
+                dup2(pipeArray[i % 2][1], 1);
                 if (parseCommand[i].errPipeNeed)
                 {
-                    dup2(GlobalPipe[i%2][1], 2);
+                    dup2(GlobalPipe[i % 2][1], 2);
                 }
-                close(pipeArray[i%2][1]);
+                close(pipeArray[i % 2][1]);
             }
 
             // * number Pipe behind
@@ -257,7 +256,7 @@ int parserCommand(vector<string> SeperateInput)
 
             //  * handle numberPipe stdIn
             if (i == 0 && NumberPipeNeed != -1)
-            {   
+            {
                 close(GlobalPipe[NumberPipeNeed][1]);
                 dup2(GlobalPipe[NumberPipeNeed][0], 0);
                 close(GlobalPipe[NumberPipeNeed][0]);
@@ -267,26 +266,25 @@ int parserCommand(vector<string> SeperateInput)
         }
         else if (pid > 0) // parent  process
         {
-            if (i>0)
+            if (i > 0)
             {
-                close(pipeArray[(i-1)%2][0]);
-                close(pipeArray[(i-1)%2][1]);
+                close(pipeArray[(i - 1) % 2][0]);
+                close(pipeArray[(i - 1) % 2][1]);
             }
 
-            if (i == 0 && NumberPipeNeed != -1) 
+            if (i == 0 && NumberPipeNeed != -1)
             {
                 close(GlobalPipe[NumberPipeNeed][0]);
                 close(GlobalPipe[NumberPipeNeed][1]);
                 GlobalPipeUsed[NumberPipeNeed] = false;
                 NumberPipeArray.erase(NumberPipeArray.begin() + indexInNumberPipe);
             }
-            
         }
         else // fork error
         {
             // cerr << "fork error" << endl;
-            close(pipeArray[i%2][0]);
-            close(pipeArray[i%2][1]);
+            close(pipeArray[i % 2][0]);
+            close(pipeArray[i % 2][1]);
             i--;
             continue;
         }
