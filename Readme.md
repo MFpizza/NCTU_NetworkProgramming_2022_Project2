@@ -18,19 +18,19 @@ make clean
 
 ## three different socket program
 ### np_simple (Single user)
-    - Concurrent connection-oriented
-    - only allow one client connect
+- Concurrent connection-oriented
+- only allow one client connect
 ### np_single_proc (Multiple user)
-    - single-process concurrent chat-like systems
-    - userPipe with pipe()
+- single-process concurrent chat-like systems
+- userPipe with pipe()
 
 ### np_multi_proc (Multiple user)
-    - Concurrent connection-oriented + FIFO + Shared memory
-    - fork slave server to handle each client
-    - Shared memory implement clients and broadcast
-        - use <mman.h> mmap to handle shared memory
-    - FIFO implement userPipe
-        - use mknod(fifoFileName.c_str(), S_IFIFO | 0777, 0) to create FIFO file
+- Concurrent connection-oriented + FIFO + Shared memory
+- fork slave server to handle each client
+- Shared memory implement clients and broadcast
+    - use <mman.h> mmap to handle shared memory
+- FIFO implement userPipe
+    - use mknod(fifoFileName.c_str(), S_IFIFO | 0777, 0) to create FIFO file
 
 
 **detail function saw document**
