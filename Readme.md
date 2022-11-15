@@ -28,7 +28,11 @@ make clean
     - Concurrent connection-oriented + FIFO + Shared memory
     - fork slave server to handle each client
     - Shared memory implement clients and broadcast
+        - use <mman.h> mmap to handle shared memory
     - FIFO implement userPipe
+        - use mknod(fifoFileName.c_str(), S_IFIFO | 0777, 0) to create FIFO file
+
+
 **detail function saw document**
 
 ## others may use
