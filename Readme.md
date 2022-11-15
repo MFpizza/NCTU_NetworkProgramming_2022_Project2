@@ -1,11 +1,19 @@
-## How to compile
-### build
+如果這個程式對你有幫助，希望你能夠幫我按個star
+## How to compile & exec
+### compile
 ```
 make
 ```
 ### clear executable
 ```
 make clean
+```
+### exec
+>[exe] [port]
+```
+./np_simple 1234
+./np_single_proc 2345
+./np_multi_proc 3456
 ```
 
 ## three different socket program
@@ -45,14 +53,14 @@ $ coredumpctl debug np_multi_proc
 
 ### 查找 shared memory
 ```
-ipcs -m
+$ ipcs -m
 
 # 清理
-ipcrm -m [shmid]
+$ ipcrm -m [shmid]
 ```
 
 ### clear .nfs cache檔
 ```
 # 假設.nfs檔名= .nfs001
-lsof .nfs001 | awk '{print $2}' | xargs -rn1 kill
+$ lsof .nfs001 | awk '{print $2}' | xargs -rn1 kill
 ```
