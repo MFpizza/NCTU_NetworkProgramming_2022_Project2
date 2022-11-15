@@ -1,16 +1,54 @@
 #include "np_multi_proc.h"
+#include "np_multi_slave.h"
+#include <algorithm>
+using namespace std;
 
-const char welcome[] =
-    "****************************************\n\
-** Welcome to the information server. **\n\
-****************************************\n";
+// slave global variable
+int myIndex;
+client *me;
+int userPipeFDArray[31] = {0};
+vector<myNumberPipe> NumberPipeArray;
+int GlobalPipe[1000][2];
+bool GlobalPipeUsed[1000];
 
-int serverOutfd = 300;
-/*
- * return 1 with no error and continue
- * return 0 with no error but stop
- * return -1 with error
- */
+void executeFunction(myCommandLine tag);
+int parserCommand(vector<string> SeperateInput);
+void broadcast(BROADCAST_TYPE type, int fromFD, string msg, int targetFD, int targetIndex);
+void who();
+void name(string name);
+char *printEnv(string variable);
+int setEnv(string s1, string s2);
+void signalHandler(int sig);
+
+void signalHandler(int sig)
+{
+    if (sig == SIGCHLD)
+        pid_t pid = wait(NULL);
+    else if (sig == SIGINT)
+    {
+        // cout << "\nchild SIGINT accept" << endl;
+        exit(0);
+    }
+    else if (sig == SIGUSR2)
+    {
+        // cout << "accept signal sigusr2" << endl;
+        // TODO: create , open FIFO read
+        for (int i = 1; i < MAX_CLIENT; i++)
+        {
+            if (clients[i].used && userPipeFDArray[i] == 0)
+            {
+                string fifoName = USERPIPE_PATH + to_string(myIndex * 30 + i);
+                int readFD = open(fifoName.c_str(), 0);
+                if (readFD < 0) // FIFO 不存在
+                    continue;
+                userPipeFDArray[i] = readFD;
+            }
+        }
+    }
+    else
+        cout << "accept sig:" << sig << endl;
+}
+
 int shellwithFD(int fd)
 {
     signal(SIGCHLD, signalHandler);
@@ -19,17 +57,20 @@ int shellwithFD(int fd)
     clearenv();
     setenv("PATH", "bin:.", 1);
 
-    for (int i = 1; i < MAX_CLIENT; i++)
+    myIndex = 1;
+    while (true)
     {
-        if (clients[i].fd == fd)
+        if (clients[myIndex].pid == getpid())
         {
-            me = &clients[i];
-            myIndex = i;
+            me = &clients[myIndex];
             break;
         }
+        myIndex++;
+        if(myIndex > MAX_CLIENT)
+            myIndex = 1;
     }
+    broadcast(LOGIN, me->fd, "", 0, 0);
 
-    // tmp variable
     string s;
     cout << "% ";
     while (getline(cin, s))
@@ -44,6 +85,8 @@ int shellwithFD(int fd)
         s.erase(remove(s.begin(), s.end(), '\n'), s.end());
         s.erase(remove(s.begin(), s.end(), '\r'), s.end());
         // cout<<s.size()<<endl;
+
+        // echo 指令
         broadcast(SERVER, 0, s, 0, 0);
 
         // 分割當前的指令
@@ -78,6 +121,74 @@ int shellwithFD(int fd)
     return 1;
 }
 
+void broadcast(BROADCAST_TYPE type, int fromFD, string msg, int targetFD, int targetIndex)
+{
+    int indexTarget;
+    for (int i = 1; i < MAX_CLIENT; i++)
+    {
+        if (!clients[i].used)
+            continue;
+        else if (clients[i].fd == targetFD)
+            indexTarget = i;
+    }
+
+    broadcastMsg *bmPtr = &BM[myIndex];
+
+    char *buf = bmPtr->msg;
+    memset(buf, 0, sizeof(char) * BUFSIZE);
+    switch (type)
+    {
+    case LOGIN:
+        sprintf(buf, "*** User '%s' entered from %s. ***\n", me->name, me->ip);
+        break;
+    case LOGOUT:
+        sprintf(buf, "*** User '%s' left. ***\n", me->name);
+        break;
+    case NAME:
+        sprintf(buf, "*** User from %s is named '%s'. ***\n", me->ip, me->name);
+        break;
+    case YELL:
+        sprintf(buf, "*** %s yelled ***: %s\n", me->name, msg.c_str());
+        break;
+    case TELL:
+        sprintf(buf, "*** %s told you ***: %s\n", me->name, msg.c_str());
+        break;
+    case SEND:
+        sprintf(buf, "*** %s (#%d) just piped '%s' to %s (#%d) ***\n", me->name, myIndex, msg.c_str(), clients[indexTarget].name, indexTarget);
+        break;
+    case RECV:
+        sprintf(buf, "*** %s (#%d) just received from %s (#%d) by '%s' ***\n", me->name, myIndex, clients[indexTarget].name, indexTarget, msg.c_str());
+        break;
+    case ERROR_USER:
+        sprintf(buf, "*** Error: user #%d does not exist yet. ***\n", targetIndex);
+        break;
+    case ERROR_PIPE_NOT_EXIST:
+        sprintf(buf, "*** Error: the pipe #%d->#%d does not exist yet. ***\n", targetIndex, myIndex);
+        break;
+    case ERROR_PIPE_IS_EXIST:
+        sprintf(buf, "*** Error: the pipe #%d->#%d already exists. ***\n", myIndex, targetIndex);
+        break;
+    case SERVER:
+        sprintf(buf, "%d: %s", myIndex, msg.c_str());
+        break;
+    default:
+        break;
+    }
+
+    if (type == TELL)
+        bmPtr->toFD = targetFD;
+    else if (type == SERVER)
+        bmPtr->toFD = clients[0].fd;
+    else if (type == ERROR_USER || type == ERROR_PIPE_NOT_EXIST || type == ERROR_PIPE_IS_EXIST)
+        bmPtr->toFD = me->fd;
+    else
+        bmPtr->toFD = 0;
+    bmPtr->used=true;
+    kill(clients[0].pid, SIGUSR1);
+    while (bmPtr->used)
+        continue;
+}
+
 int findTheGlobalPipeCanUse()
 {
     for (int i = 0; i < 1000; i++)
@@ -99,11 +210,6 @@ int findTheGlobalPipeCanUse()
     return -1;
 }
 
-/*
- * return 1 with no error and continue
- * return 0 with no error but stop
- * return -1 with error
- */
 int parserCommand(vector<string> SeperateInput)
 {
     int NumberPipeNeed = -1, indexInNumberPipe = -1;
@@ -581,6 +687,7 @@ char *printEnv(string variable)
     if (getenv(variable.c_str()) != NULL)
         return getenv(variable.c_str());
 }
+
 int setEnv(string s1, string s2)
 {
     if (setenv(s1.c_str(), s2.c_str(), 1) == -1)
@@ -590,382 +697,4 @@ int setEnv(string s1, string s2)
     };
 
     return 1;
-}
-
-void logoutControl(int pid)
-{
-    cout << "[Server] clients ptr:" << clients << endl;
-    int fd, closeClientIndex;
-    for (int index = 1; index < MAX_CLIENT; index++)
-    {
-        if (clients[index].used && clients[index].pid == pid)
-        {
-            printClients(index);
-            closeClientIndex = index;
-            broadcast(LOGOUT, clients[index].fd, "", 0, 0);
-            clients[index].used = false;
-            close(clients[index].fd);
-            break;
-        }
-    }
-    // clean up fifo
-    for (int i = 1; i < MAX_CLIENT; i++)
-    {
-        string file1 = USERPIPE_PATH + to_string(30 * i + closeClientIndex);
-        if ((unlink(file1.c_str()) < 0) && (errno != ENOENT))
-            perror("unlink");
-        string file2 = USERPIPE_PATH + to_string(30 * closeClientIndex + i);
-        if ((unlink(file2.c_str()) < 0) && (errno != ENOENT))
-            perror("unlink");
-    }
-}
-
-void signalHandler(int sig)
-{
-    if (sig == SIGCHLD)
-        pid_t pid = wait(NULL);
-    else if (sig == SIGINT)
-    {
-        // cout << "\nchild SIGINT accept" << endl;
-        exit(0);
-    }
-    else if (sig == SIGUSR2)
-    {
-        // cout << "accept signal sigusr2" << endl;
-        // TODO: create , open FIFO read
-        for (int i = 1; i < MAX_CLIENT; i++)
-        {
-            if (clients[i].used && userPipeFDArray[i] == 0)
-            {
-                string fifoName = USERPIPE_PATH + to_string(myIndex * 30 + i);
-                int readFD = open(fifoName.c_str(), 0);
-                if (readFD < 0) // FIFO 不存在
-                    continue;
-                userPipeFDArray[i] = readFD;
-            }
-        }
-    }
-    else
-        cout << "accept sig:" << sig << endl;
-}
-
-// TODO: 創建一個signal handler 處理client離開的事情
-void ServerSignalHandler(int sig)
-{
-    if (sig == SIGUSR1)
-    {
-        // cout << "server SIGUSR1: ready to broadcast" << endl;
-        ServerBroadcast();
-    }
-    else if (sig == SIGCHLD)
-    {
-        int pid, status;
-        pid = wait(&status);
-        // cout << "[SigChld]: child pid " << pid << " exit" << endl;
-        logoutControl(pid);
-    }
-    else if (sig == SIGINT)
-    {
-        // TODO: clean shared memory and FIFO
-
-        cout << "\nserver SIGINT accept" << endl;
-
-        for (int index = 1; index < MAX_CLIENT; index++)
-        {
-            if (clients[index].used)
-            {
-                cout << "[SigInt]: interrupt pid:" << clients[index].pid << endl;
-                kill(clients[index].pid, SIGINT);
-            }
-        }
-
-        if (munmap(clients, sizeof(client) * MAX_CLIENT) < 0)
-            perror("munmap clients");
-        if (remove(csfile.c_str()) < 0)
-            perror("rm cs");
-
-        if (munmap(BM, sizeof(broadcastMsg)) < 0)
-            perror("munmap BM");
-        if (remove(bmfile.c_str()) < 0)
-            perror("rm bs");
-
-        if (rmdir(SM_PATH.c_str()) < 0)
-            perror("rmdir");
-
-        // for (int i = 1; i < MAX_CLIENT; i++)
-        // {
-        //     for (int j = 1; j < MAX_CLIENT; j++)
-        //     {
-        //         string fifoFileName = "./user_pipe/" + to_string(30 * (i) + j);
-        //         if ((unlink(fifoFileName.c_str()) < 0) && (errno != ENOENT))
-        //             perror("unlink");
-        //     }
-        // }
-
-        if (rmdir(USERPIPE_PATH.c_str()) < 0)
-            perror("rmdir");
-        exit(0);
-    }
-    else
-    {
-        cout << "signal:" << sig << endl;
-    }
-}
-
-int passiveTCP(int port)
-{
-    int sockfd;
-    struct sockaddr_in sin;
-
-    if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-        perror("S/Socket");
-
-    memset((char *)&sin, 0, sizeof(sin));
-    // bzero((char* )&serv_addr, sizeof(serv_addr));
-    sin.sin_family = AF_INET;
-    sin.sin_addr.s_addr = INADDR_ANY;
-    sin.sin_port = htons(port);
-
-    int optval = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(int)) == -1)
-        perror("S/Setsocket");
-
-    if (bind(sockfd, (struct sockaddr *)&sin, sizeof(sin)) < 0)
-        perror("S/Bind");
-
-    if (listen(sockfd, LISTEN_BACKLOG) < 0)
-        perror("S/Listen");
-
-    return sockfd;
-}
-
-void newClientHandler(int fd, string name, string ip, int pid)
-{
-    for (int i = 1; i < MAX_CLIENT; i++)
-    {
-        if (!clients[i].used)
-        {
-            clients[i].fd = fd;
-            strcpy(clients[i].ip, ip.c_str());
-            strcpy(clients[i].name, name.c_str());
-            clients[i].pid = pid;
-            clients[i].used = true;
-            printClients(i);
-            return;
-        }
-    }
-}
-
-void printClients(int h)
-{
-    // printf("clients[%d]: \n", h);
-    // printf("\t used:\t%d\n", clients[h].used);
-    // printf("\t fd:\t%d\n", clients[h].fd);
-    // printf("\t pid:\t%d\n", clients[h].pid);
-    // printf("\t name:\t%s\n", clients[h].name);
-}
-
-void initMMap()
-{
-    csfile = SM_PATH + "clientsSharedMemory";
-    clients_shared_momory_fd = open(csfile.c_str(), O_CREAT | O_RDWR, 00777);
-    ftruncate(clients_shared_momory_fd, sizeof(client) * MAX_CLIENT);
-    clients = (client *)mmap(NULL, sizeof(client) * MAX_CLIENT, PROT_READ | PROT_WRITE, MAP_SHARED, clients_shared_momory_fd, 0);
-    if (clients == MAP_FAILED)
-        perror("mmap");
-    // cout << "[Server] mmap init with clients ptr: " << clients << endl;
-
-    bmfile = SM_PATH + "broadcastSharedMemory";
-    broadcast_shared_momory_fd = open(bmfile.c_str(), O_CREAT | O_RDWR, 00777);
-    ftruncate(broadcast_shared_momory_fd, sizeof(broadcastMsg) * MAX_BROADCAST);
-    BM = (broadcastMsg *)mmap(NULL, sizeof(broadcastMsg) * MAX_BROADCAST, PROT_READ | PROT_WRITE, MAP_SHARED, broadcast_shared_momory_fd, 0);
-    if (BM == MAP_FAILED)
-        perror("mmap");
-}
-
-int main(int argc, char *argv[])
-{
-    signal(SIGCHLD, ServerSignalHandler);
-    signal(SIGINT, ServerSignalHandler);
-    signal(SIGUSR1, ServerSignalHandler);
-    dup2(1, serverOutfd);
-
-    if (NULL == opendir(USERPIPE_PATH.c_str()))
-        mkdir(USERPIPE_PATH.c_str(), 0777);
-    if (NULL == opendir(SM_PATH.c_str()))
-        mkdir(SM_PATH.c_str(), 0777);
-
-    initMMap();
-    int port = (argc > 1) ? atoi(argv[1]) : 7000;
-    cout << "[Port]: " << port << endl;
-    struct sockaddr_in fsin;
-
-    int alen, pid;
-    ppid = getpid();
-    cout << "[Server pid]:" << ppid << endl;
-    msock = passiveTCP(port);
-
-    clients[0].pid = ppid;
-    clients[0].used = true;
-    strcpy(clients[0].name, "server");
-    clients[0].fd = msock;
-
-    while (true)
-    {
-        alen = sizeof(fsin);
-        int ssock = accept(msock, (struct sockaddr *)&fsin, (socklen_t *)&alen);
-        if (ssock < 0)
-        {
-            perror("accept");
-            continue;
-        }
-
-        pid = fork();
-        while (pid < 0)
-        {
-            usleep(500);
-            pid = fork();
-        }
-        if (pid > 0)
-        {
-            string ip = inet_ntoa(fsin.sin_addr);
-            ip = ip + ":" + to_string(ntohs(fsin.sin_port));
-            newClientHandler(ssock, "(no name)", ip, pid);
-            // close(ssock);
-            // cout << "end" << endl;
-        }
-        else
-        {
-            send(ssock, welcome, sizeof(welcome) - 1, 0);
-            broadcast(LOGIN, ssock, "", 0, 0);
-            dup2(ssock, 0);
-            dup2(ssock, 1);
-            dup2(ssock, 2);
-            shellwithFD(ssock);
-        }
-    }
-}
-
-void broadcast(BROADCAST_TYPE type, int fromFD, string msg, int targetFD, int targetIndex)
-{
-    client *from = NULL;
-    int indexFrom, indexTarget;
-    for (int i = 1; i < MAX_CLIENT; i++)
-    {
-        if (!clients[i].used)
-            continue;
-        if (fromFD == clients[i].fd)
-        {
-            indexFrom = i;
-            from = &clients[i];
-        }
-        if (clients[i].fd == targetFD)
-            indexTarget = i;
-    }
-
-    broadcastMsg *bm;
-    bool findBMEmpty = false;
-    while (!findBMEmpty)
-    {
-        for (int i = 0; i < MAX_BROADCAST; i++)
-        {
-            if (!BM[i].used)
-            {
-                BM[i].used = true;
-                findBMEmpty = true;
-                bm = &BM[i];
-            }
-        }
-    }
-
-    char *buf = BM->msg;
-    memset(buf, 0, sizeof(char) * BUFSIZE);
-
-    switch (type)
-    {
-    case LOGIN:
-        sprintf(buf, "*** User '%s' entered from %s. ***\n", from->name, from->ip);
-        break;
-    case LOGOUT:
-        sprintf(buf, "*** User '%s' left. ***\n", from->name);
-        break;
-    case NAME:
-        sprintf(buf, "*** User from %s is named '%s'. ***\n", from->ip, from->name);
-        break;
-    case YELL:
-        sprintf(buf, "*** %s yelled ***: %s\n", from->name, msg.c_str());
-        break;
-    case TELL:
-        sprintf(buf, "*** %s told you ***: %s\n", from->name, msg.c_str());
-        break;
-    case SEND:
-        sprintf(buf, "*** %s (#%d) just piped '%s' to %s (#%d) ***\n", from->name, indexFrom, msg.c_str(), clients[indexTarget].name, indexTarget);
-        break;
-    case RECV:
-        sprintf(buf, "*** %s (#%d) just received from %s (#%d) by '%s' ***\n", from->name, indexFrom, clients[indexTarget].name, indexTarget, msg.c_str());
-        break;
-    case ERROR_USER:
-        sprintf(buf, "*** Error: user #%d does not exist yet. ***\n", targetIndex);
-        break;
-    case ERROR_PIPE_NOT_EXIST:
-        sprintf(buf, "*** Error: the pipe #%d->#%d does not exist yet. ***\n", targetIndex, indexFrom);
-        break;
-    case ERROR_PIPE_IS_EXIST:
-        sprintf(buf, "*** Error: the pipe #%d->#%d already exists. ***\n", indexFrom, targetIndex);
-        break;
-    case SERVER:
-        sprintf(buf, "%d: %s",myIndex, msg.c_str());
-        break;
-    default:
-        break;
-    }
-
-    if (type == TELL)
-    {
-        BM->toFD = targetFD;
-    }
-    else if (type == SERVER)
-    {
-        BM->toFD = msock;
-    }
-    else if (type == ERROR_USER || type == ERROR_PIPE_NOT_EXIST || type == ERROR_PIPE_IS_EXIST)
-    {
-        BM->toFD = from->fd;
-    }
-    else
-        BM->toFD = 0;
-    kill(ppid, SIGUSR1);
-
-    while (BM->used)
-        continue;
-}
-
-void ServerBroadcast()
-{
-    for (int i = 0; i < MAX_BROADCAST; i++)
-    {
-        if (BM[i].used)
-        {
-            if (BM[i].toFD == msock)
-            {
-                string output(BM[i].msg);
-                cout << output << endl;
-            }
-            else if (BM[i].toFD != 0)
-            {
-                string output(BM[i].msg);
-                if (send(BM[i].toFD, output.c_str(), output.size(), 0) < 0)
-                    perror("broadcast/send");
-            }
-            else
-            {
-                string output(BM[i].msg);
-                for (int index = 1; index < MAX_CLIENT; index++)
-                    if (clients[index].used)
-                        if (send(clients[index].fd, output.c_str(), output.size(), 0) < 0)
-                            perror("broadcast/send");
-            }
-            BM[i].used = false;
-        }
-    }
 }
