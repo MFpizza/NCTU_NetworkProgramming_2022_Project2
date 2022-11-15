@@ -27,18 +27,42 @@ int passiveTCP(int port)
     return sockfd;
 }
 
-void newClientHandler(client *client)
+void newClientHandler(int fd, string ip)
 {
     for (int i = 1; i < clients.size(); i++)
     {
         if (clients[i] == NULL)
         {
-            clients[i] = client;
+            clients[i] = new client(fd, "(no name)", ip);
+            setEnv("PATH", "bin:.", clients[i]);
+            send(fd, welcome, sizeof(welcome) - 1, 0);
+            broadcast(LOGIN, clients[i], "", 0, 0);
+            send(fd, "% ", 2, 0);
             return;
         }
     }
-    clients.push_back(client);
     return;
+}
+
+void logoutControl(int fd)
+{
+    int clientIndex;
+    for (int i = 1; i < clients.size(); i++)
+    {
+        if (clients[i] != NULL)
+            if (clients[i]->fd == fd)
+            {
+                broadcast(LOGOUT, clients[i], "", 0, 0);
+                delete clients[i];
+                clients[i] = NULL;
+                clientIndex = i;
+                userPipe.erase(i);
+            }
+    }
+    for (int i = 1; i < clients.size(); i++)
+    {
+        userPipe[i].erase(clientIndex);
+    }
 }
 
 int main(int argc, char *argv[])
@@ -47,7 +71,7 @@ int main(int argc, char *argv[])
 
     int port = (argc > 1) ? atoi(argv[1]) : 7000;
     cout << "[Port]: " << port << endl;
-    clients.resize(1);
+    clients.resize(31, NULL);
     struct sockaddr_in fsin;
 
     int alen;
@@ -78,39 +102,29 @@ int main(int argc, char *argv[])
             if (ssock < 0)
                 perror("accept");
             FD_SET(ssock, &afds);
-            
+            cout<<ssock<<endl;
             string ip = inet_ntoa(fsin.sin_addr);
             ip = ip + ":" + to_string(ntohs(fsin.sin_port));
-            client *nC = new client(ssock, "(no name)", ip);
-            setEnv("PATH", "bin:.", nC);
-            newClientHandler(nC);
-            send(ssock, welcome, sizeof(welcome) - 1, 0);
-            broadcast(LOGIN, nC, "", 0, 0);
-            send(ssock, "% ", 2, 0);
+            newClientHandler(ssock, ip);
         }
         for (fd = 0; fd < nfds; fd++)
-        {
             if (fd != msock && FD_ISSET(fd, &rfds))
             {
+                int *std=new int[3];
+                for(int i=0; i<3; i++)
+                    std[i]=dup(i);
                 if (shellwithFD(fd) < 1)
                 {
-                    client *c;
-                    int clientIndex;
-                    for (clientIndex = 1; clientIndex < clients.size(); clientIndex++)
-                    {
-                        if (clients[clientIndex] != NULL && clients[clientIndex]->fd == fd)
-                        {
-                            c = clients[clientIndex];
-                            break;
-                        }
-                    }
-                    broadcast(LOGOUT, c, "", 0, 0);
-                    logoutControl(fd, clientIndex);
+                    logoutControl(fd);
                     close(fd);
-                    // cout << "fd:" << fd << " is closed" << endl;
                     FD_CLR(fd, &afds);
                 }
+                for(int i=0; i<3; i++){
+                    close(i);
+                    dup2(std[i],i);
+                    close(std[i]);
+                }
+                delete[]std;
             }
-        }
     }
 }

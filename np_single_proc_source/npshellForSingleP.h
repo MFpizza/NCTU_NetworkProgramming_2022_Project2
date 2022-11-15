@@ -84,7 +84,7 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c);
 void broadcast(BROADCAST_TYPE type, client *from, string msg, int targetFD, int targetIndex);
 void who(int fd);
 void name(int fd, string name);
-void logoutControl(int fd, int clientIndex);
+void logoutControl(int fd);
 char *printEnv(string variable, client *c);
 int setEnv(string s1, string s2, client *c);
 
@@ -124,9 +124,6 @@ int shellwithFD(int fd)
             c = clients[i];
     }
 
-    dup2(fd, 1);
-    dup2(fd, 2);
-
     signal(SIGCHLD, signalHandler);
     clearenv();
     setenv("PATH", printEnv("PATH", c), 1);
@@ -143,7 +140,10 @@ int shellwithFD(int fd)
     s.erase(remove(s.begin(), s.end(), '\n'), s.end());
     s.erase(remove(s.begin(), s.end(), '\r'), s.end());
     // cout<<s.size()<<endl;
-
+    // cout<<s<<endl;
+    
+    dup2(fd, 1);
+    dup2(fd, 2);
     // 分割當前的指令
     vector<string> lineSplit;
     string delimiter = " ";
@@ -415,12 +415,12 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
 
         count++;
     }
-
     int pipeArray[2][2];
     for (int i = 0; i < parseCommand.size(); i++)
     {
-        if (pipe(pipeArray[i % 2]) < 0)
-            perror("pipe gen failed");
+        if(parseCommand.size()>1)
+            if (pipe(pipeArray[i % 2]) < 0)
+                perror("pipe gen failed");
 
         // * handle userPipe in
         if (parseCommand[i].pipeFrom != -1)
@@ -616,8 +616,9 @@ void who(int fd)
     printf("<ID>\t<nickname>\t<IP:port>\t<indicate me>\n");
     for (int index = 1; index < clients.size(); index++)
     {
-        client *c = clients[index];
-        if (c != NULL)
+        if (clients[index] != NULL)
+        {
+            client *c = clients[index];
             if (c->fd == fd)
             {
                 printf("%d\t%s\t%s\t<-me\n", index, c->name.c_str(), c->ip.c_str());
@@ -626,6 +627,7 @@ void who(int fd)
             {
                 printf("%d\t%s\t%s\t\n", index, c->name.c_str(), c->ip.c_str());
             }
+        }
     }
 }
 
@@ -737,22 +739,6 @@ void broadcast(BROADCAST_TYPE type, client *from, string msg, int targetFD, int 
                 perror("broadcast/send");
 }
 
-void logoutControl(int fd, int clientIndex)
-{
-    for (int i = 1; i < clients.size(); i++)
-    {
-        if (clients[i] != NULL)
-            if (clients[i]->fd == fd)
-            {
-                clients[i] = NULL;
-                userPipe.erase(i);
-            }
-            else
-            {
-                userPipe[i].erase(clientIndex);
-            }
-    }
-}
 char *printEnv(string variable, client *c)
 {
     if (c->environment.count(variable))
