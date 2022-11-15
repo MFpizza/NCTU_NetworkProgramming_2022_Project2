@@ -1,3 +1,13 @@
+## How to compile
+### build
+```
+make
+```
+### clear executable
+```
+make clean
+```
+
 ## three different socket program
 ### np_simple (Single user)
     - Concurrent connection-oriented
