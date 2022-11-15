@@ -214,8 +214,9 @@ int parserCommand(vector<string> SeperateInput)
     int pipeArray[2][2];
     for (int i = 0; i < parseCommand.size(); i++)
     {
-        if (pipe(pipeArray[i % 2]) < 0)
-            perror("pipe gen failed");
+        if (parseCommand.size() > 1)
+            if (pipe(pipeArray[i % 2]) < 0)
+                perror("pipe gen failed");
 
         pid = fork();
         if (pid == 0) // child process

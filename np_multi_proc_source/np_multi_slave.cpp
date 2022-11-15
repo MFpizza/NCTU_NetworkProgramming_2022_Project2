@@ -66,7 +66,7 @@ int shellwithFD(int fd)
             break;
         }
         myIndex++;
-        if(myIndex > MAX_CLIENT)
+        if (myIndex > MAX_CLIENT)
             myIndex = 1;
     }
     broadcast(LOGIN, me->fd, "", 0, 0);
@@ -183,7 +183,7 @@ void broadcast(BROADCAST_TYPE type, int fromFD, string msg, int targetFD, int ta
         bmPtr->toFD = me->fd;
     else
         bmPtr->toFD = 0;
-    bmPtr->used=true;
+    bmPtr->used = true;
     kill(clients[0].pid, SIGUSR1);
     while (bmPtr->used)
         continue;
@@ -439,8 +439,9 @@ int parserCommand(vector<string> SeperateInput)
     int pipeArray[2][2];
     for (int i = 0; i < parseCommand.size(); i++)
     {
-        if (pipe(pipeArray[i % 2]) < 0)
-            perror("pipe gen failed");
+        if (parseCommand.size() > 1)
+            if (pipe(pipeArray[i % 2]) < 0)
+                perror("pipe gen failed");
 
         // * handle userPipe in
         if (parseCommand[i].pipeFrom != -1)
