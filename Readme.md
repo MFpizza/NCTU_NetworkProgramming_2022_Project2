@@ -1,16 +1,38 @@
+如果這個程式對你有幫助，希望你能夠幫我按個star
+## How to compile & exec
+### compile
+```
+make
+```
+### clear executable
+```
+make clean
+```
+### exec
+>[exe] [port]
+```
+./np_simple 1234
+./np_single_proc 2345
+./np_multi_proc 3456
+```
+
 ## three different socket program
 ### np_simple (Single user)
-    - Concurrent connection-oriented
-    - only allow one client connect
+- Concurrent connection-oriented
+- only allow one client connect
 ### np_single_proc (Multiple user)
-    - single-process concurrent chat-like systems
-    - userPipe with pipe()
+- single-process concurrent chat-like systems
+- userPipe with pipe()
 
 ### np_multi_proc (Multiple user)
-    - Concurrent connection-oriented + FIFO + Shared memory
-    - fork slave server to handle each client
-    - Shared memory implement clients and broadcast
-    - FIFO implement userPipe
+- Concurrent connection-oriented + FIFO + Shared memory
+- fork slave server to handle each client
+- Shared memory implement clients and broadcast
+    - use <mman.h> mmap to handle shared memory
+- FIFO implement userPipe
+    - use mknod(fifoFileName.c_str(), S_IFIFO | 0777, 0) to create FIFO file
+
+
 **detail function saw document**
 
 ## others may use
@@ -35,14 +57,14 @@ $ coredumpctl debug np_multi_proc
 
 ### 查找 shared memory
 ```
-ipcs -m
+$ ipcs -m
 
 # 清理
-ipcrm -m [shmid]
+$ ipcrm -m [shmid]
 ```
 
 ### clear .nfs cache檔
 ```
 # 假設.nfs檔名= .nfs001
-lsof .nfs001 | awk '{print $2}' | xargs -rn1 kill
+$ lsof .nfs001 | awk '{print $2}' | xargs -rn1 kill
 ```
