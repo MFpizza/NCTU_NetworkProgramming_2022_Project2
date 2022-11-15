@@ -1,4 +1,19 @@
+## three different socket program
+### np_simple (Single user)
+    - Concurrent connection-oriented
+    - only allow one client connect
+### np_single_proc (Multiple user)
+    - single-process concurrent chat-like systems
+    - userPipe with pipe()
 
+### np_multi_proc (Multiple user)
+    - Concurrent connection-oriented + FIFO + Shared memory
+    - fork slave server to handle each client
+    - Shared memory implement clients and broadcast
+    - FIFO implement userPipe
+**detail function saw document**
+
+## others may use
 ### 查找 port 是否有人使用
 ex: port:1234
 ```
