@@ -25,3 +25,9 @@ ipcs -m
 # 清理
 ipcrm -m [shmid]
 ```
+
+### clear .nfs cache檔
+```
+# 假設.nfs檔名= .nfs001
+lsof .nfs001 | awk '{print $2}' | xargs -rn1 kill
+```
