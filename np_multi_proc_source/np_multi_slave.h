@@ -19,8 +19,8 @@ typedef enum
 
 struct myNumberPipe
 {
-    int number;            // Next number time to pipe the output
-    int IndexOfGlobalPipe; // Index of global pipe
+    int number; // Next number time to pipe the output
+    int numberPipe[2];
 };
 
 struct myCommandLine
