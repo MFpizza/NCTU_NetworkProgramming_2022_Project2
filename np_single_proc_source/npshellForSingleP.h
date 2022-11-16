@@ -3,14 +3,10 @@
 #include <vector>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <filesystem>
 #include <stdlib.h>
 #include <signal.h>
 #include <sys/stat.h>
-#include <vector>
 #include <fcntl.h>
-#include <fstream>
-#include <pwd.h>
 #include <algorithm>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -39,8 +35,8 @@ typedef enum
 
 struct myNumberPipe
 {
-    int number;            // Next number time to pipe the output
-    int IndexOfGlobalPipe; // Index of global pipe
+    int number; // Next number time to pipe the output
+    int numberPipe[2];
 };
 
 struct myCommandLine
@@ -64,7 +60,7 @@ struct client
     int fd;
     string name;
     string ip;
-    vector<myNumberPipe> NumberPipeArray;
+    vector<myNumberPipe> number_pipe_array;
     int GlobalPipe[1000][2];
     bool GlobalPipeUsed[1000];
     map<string, string> environment;
@@ -141,7 +137,7 @@ int shellwithFD(int fd)
     s.erase(remove(s.begin(), s.end(), '\r'), s.end());
     // cout<<s.size()<<endl;
     // cout<<s<<endl;
-    
+
     dup2(fd, 1);
     dup2(fd, 2);
     // 分割當前的指令
@@ -175,44 +171,14 @@ int shellwithFD(int fd)
     return 1;
 }
 
-int findTheGlobalPipeCanUse(client *c)
-{
-    for (int i = 0; i < 1000; i++)
-    {
-        if (!c->GlobalPipeUsed[i])
-        {
-            c->GlobalPipeUsed[i] = !c->GlobalPipeUsed[i];
-
-            if (pipe(c->GlobalPipe[i]) == -1)
-            {
-                cerr << "GlobalPipe gen failed" << endl;
-                exit(-1);
-            }
-
-            return i;
-        }
-    }
-    cerr << "All GlobalPipe Used" << endl;
-    return -1;
-}
-
-/*
- * return 1 with no error and continue
- * return 0 with no error but stop
- * return -1 with error
- */
 int parserCommand(vector<string> SeperateInput, int fd, client *c)
 {
-    int rc;
-    int NumberPipeNeed = -1, indexInNumberPipe = -1;
-    for (int j = 0; j < c->NumberPipeArray.size(); j++)
+    int indexInNumberPipe = -1;
+    for (int j = 0; j < c->number_pipe_array.size(); j++)
     {
-        c->NumberPipeArray[j].number = c->NumberPipeArray[j].number - 1;
-        if (c->NumberPipeArray[j].number == 0)
-        {
+        c->number_pipe_array[j].number = c->number_pipe_array[j].number - 1;
+        if (c->number_pipe_array[j].number == 0)
             indexInNumberPipe = j;
-            NumberPipeNeed = c->NumberPipeArray[j].IndexOfGlobalPipe;
-        }
     }
 
     if (SeperateInput[0] == "printenv")
@@ -278,7 +244,7 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
     int status = 0;
 
     string msg;
-    int count = 0, parseCommandLine = 0, pipeNumber = 0;
+    int parseCommandLine = 0, pipeNumber = 0;
     // userpipe variable
     int from, to;
     vector<myCommandLine> parseCommand;
@@ -293,46 +259,46 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
         }
     }
 
-    while (count < SeperateInput.size())
+    for (int count = 0; count < SeperateInput.size(); count++)
     {
-
+        // * implement pipe, number pipe and error pipe
         if (SeperateInput[count][0] == '|' || SeperateInput[count][0] == '!')
         {
+            // * error pipe
             if (SeperateInput[count][0] == '!')
             {
                 parseCommand[parseCommandLine].errPipeNeed = true;
             }
 
-            // * 實作numberPipe
-            if (SeperateInput[count].size() > 1)
+            // * number_pipe part
+            if (SeperateInput[count].size() > 1) // && count == SeperateInput.size()-1
             {
                 SeperateInput[count].erase(SeperateInput[count].begin());
                 int Number = atoi(SeperateInput[count].c_str());
 
                 bool hasPipe = false;
                 parseCommand[parseCommandLine].numberPipe = true;
-
-                for (int k = 0; k < c->NumberPipeArray.size(); k++)
+                for (int k = 0; k < c->number_pipe_array.size(); k++)
                 {
-                    if (c->NumberPipeArray[k].number == Number)
+                    if (c->number_pipe_array[k].number == Number)
                     {
                         hasPipe = true;
-                        parseCommand[parseCommandLine].numberPipeIndex = c->NumberPipeArray[k].IndexOfGlobalPipe;
+                        parseCommand[parseCommandLine].numberPipeIndex = k;
                     }
                 }
 
                 if (!hasPipe)
                 {
-                    int GlobalPipeIndex = findTheGlobalPipeCanUse(c);
                     myNumberPipe nP;
+                    if (pipe(nP.numberPipe) < 0)
+                        perror("numberPipe");
                     nP.number = Number;
-                    nP.IndexOfGlobalPipe = GlobalPipeIndex;
-                    c->NumberPipeArray.push_back(nP);
-                    parseCommand[parseCommandLine].numberPipeIndex = GlobalPipeIndex;
+                    c->number_pipe_array.push_back(nP);
+                    parseCommand[parseCommandLine].numberPipeIndex = c->number_pipe_array.size() - 1;
                 }
             }
 
-            //* 實作普通的pipe
+            //* normal pipe
             else if (count != SeperateInput.size() - 1)
             {
                 myCommandLine newCommand;
@@ -412,9 +378,8 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
         }
         else
             parseCommand[parseCommandLine].inputCommand.push_back(SeperateInput[count]);
-
-        count++;
     }
+
     int pipeArray[2][2];
     for (int i = 0; i < parseCommand.size(); i++)
     {
@@ -465,9 +430,7 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
                 close(pipeArray[i % 2][0]);
                 dup2(pipeArray[i % 2][1], 1);
                 if (parseCommand[i].errPipeNeed)
-                {
-                    dup2(c->GlobalPipe[i % 2][1], 2);
-                }
+                    dup2(pipeArray[i % 2][1], 2);
                 close(pipeArray[i % 2][1]);
             }
 
@@ -475,22 +438,21 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
             if (parseCommand[i].numberPipe)
             {
                 // cerr<<"numberpipe"<<endl;
-                int NumberPipeIndex = parseCommand[i].numberPipeIndex;
-                close(c->GlobalPipe[NumberPipeIndex][0]);
-                dup2(c->GlobalPipe[NumberPipeIndex][1], 1);
+                int *pipeTo = c->number_pipe_array[parseCommand[i].numberPipeIndex].numberPipe;
+                close(pipeTo[0]);
+                dup2(pipeTo[1], 1);
                 if (parseCommand[i].errPipeNeed)
-                {
-                    dup2(c->GlobalPipe[NumberPipeIndex][1], 2);
-                }
-                close(c->GlobalPipe[NumberPipeIndex][1]);
+                    dup2(pipeTo[1], 2);
+                close(pipeTo[1]);
             }
 
             //  * handle numberPipe stdIn
-            if (i == 0 && NumberPipeNeed != -1)
+            if (i == 0 && indexInNumberPipe != -1)
             {
-                close(c->GlobalPipe[NumberPipeNeed][1]);
-                dup2(c->GlobalPipe[NumberPipeNeed][0], 0);
-                close(c->GlobalPipe[NumberPipeNeed][0]);
+                int *ptr = c->number_pipe_array[indexInNumberPipe].numberPipe;
+                close(ptr[1]);
+                dup2(ptr[0], 0);
+                close(ptr[0]);
             }
 
             // * handle userPipe in
@@ -541,12 +503,11 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
             }
 
             // * close numberPipe
-            if (i == 0 && NumberPipeNeed != -1)
+            if (i == 0 && indexInNumberPipe != -1)
             {
-                close(c->GlobalPipe[NumberPipeNeed][0]);
-                close(c->GlobalPipe[NumberPipeNeed][1]);
-                c->GlobalPipeUsed[NumberPipeNeed] = false;
-                c->NumberPipeArray.erase(c->NumberPipeArray.begin() + indexInNumberPipe);
+                close(c->number_pipe_array[indexInNumberPipe].numberPipe[0]);
+                close(c->number_pipe_array[indexInNumberPipe].numberPipe[1]);
+                c->number_pipe_array.erase(c->number_pipe_array.begin() + indexInNumberPipe);
             }
 
             // * close userpipe
@@ -557,14 +518,6 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
                 close(ptr[0]);
                 userPipe[myIndex].erase(parseCommand[i].pipeFrom);
             }
-
-            if (parseCommand.size() - 1 == i)
-                if (!parseCommand[i].numberPipe && !(parseCommand[i].pipeTo != -1))
-                {
-                    while ((wpid = wait(&status)) > 0)
-                    {
-                    };
-                }
         }
         else // fork error
         {
@@ -575,6 +528,9 @@ int parserCommand(vector<string> SeperateInput, int fd, client *c)
             continue;
         }
     }
+    if (!parseCommand[parseCommandLine].numberPipe && !(parseCommand[parseCommandLine].pipeTo != -1))
+        while ((wpid = wait(NULL)) > 0)
+            continue;
     return 1;
 }
 
@@ -587,14 +543,9 @@ void executeFunction(myCommandLine tag)
         {
             int fd = open(tag.inputCommand[i + 1].c_str(), O_CREAT | O_RDWR | O_TRUNC, S_IREAD | S_IWRITE);
             if (fd < 0)
-            {
                 cerr << "open failed" << endl;
-            }
-
             if (dup2(fd, 1) < 0)
-            {
                 cerr << "dup error" << endl;
-            }
             close(fd);
             arg[i] = NULL;
             break;

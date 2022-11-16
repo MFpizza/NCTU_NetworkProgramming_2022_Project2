@@ -56,11 +56,29 @@ void logoutControl(int fd)
                 delete clients[i];
                 clients[i] = NULL;
                 clientIndex = i;
-                userPipe.erase(i);
+                if (userPipe.count(i))
+                {
+                    for (int j = 1; j < clients.size(); j++)
+                    {
+                        if (userPipe[i].count(j))
+                        {
+                            close(userPipe[i][j][0]);
+                            close(userPipe[i][j][1]);
+                            userPipe[i].erase(j);
+                        }
+                    }
+                    userPipe.erase(i);
+                }
             }
     }
     for (int i = 1; i < clients.size(); i++)
     {
+        if(!userPipe.count(i))
+            continue;
+        if(!userPipe[i].count(clientIndex))
+            continue;
+        close(userPipe[i][clientIndex][0]);
+        close(userPipe[i][clientIndex][1]);
         userPipe[i].erase(clientIndex);
     }
 }
@@ -102,7 +120,7 @@ int main(int argc, char *argv[])
             if (ssock < 0)
                 perror("accept");
             FD_SET(ssock, &afds);
-            cout<<ssock<<endl;
+            cout << ssock << endl;
             string ip = inet_ntoa(fsin.sin_addr);
             ip = ip + ":" + to_string(ntohs(fsin.sin_port));
             newClientHandler(ssock, ip);
@@ -110,21 +128,22 @@ int main(int argc, char *argv[])
         for (fd = 0; fd < nfds; fd++)
             if (fd != msock && FD_ISSET(fd, &rfds))
             {
-                int *std=new int[3];
-                for(int i=0; i<3; i++)
-                    std[i]=dup(i);
+                int *std = new int[3];
+                for (int i = 0; i < 3; i++)
+                    std[i] = dup(i);
                 if (shellwithFD(fd) < 1)
                 {
                     logoutControl(fd);
                     close(fd);
                     FD_CLR(fd, &afds);
                 }
-                for(int i=0; i<3; i++){
+                for (int i = 0; i < 3; i++)
+                {
                     close(i);
-                    dup2(std[i],i);
+                    dup2(std[i], i);
                     close(std[i]);
                 }
-                delete[]std;
+                delete[] std;
             }
     }
 }
